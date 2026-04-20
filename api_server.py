@@ -1,27 +1,27 @@
-# import os
-# import asyncio
-# import logging
-# import re
+import os
+import asyncio
+import logging
+import re
 
-# from pathlib import Path
+from pathlib import Path
 
-# from fastapi import FastAPI, UploadFile, File, HTTPException
-# from fastapi.middleware.cors import CORSMiddleware
-# from pydantic import BaseModel
-# from dotenv import load_dotenv
+from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from dotenv import load_dotenv
 
-# from MCP_agent.agent_setup import shutdown_mcp
-# from MCP_agent.mcp_manager import ensure_mcp
+from MCP_agent.agent_setup import shutdown_mcp
+from MCP_agent.mcp_manager import ensure_mcp
 
-# from Agents.resume_agent import run_resume_agent
-# from Agents.job_search_agent import run_job_search_agent
-# from Agents.orchestrator import run_orchestrator
-# from tools.pdf_ingester import ingest_pdf_hybrid
+from Agents.resume_agent import run_resume_agent
+from Agents.job_search_agent import run_job_search_agent
+from Agents.orchestrator import run_orchestrator
+from tools.pdf_ingester import ingest_pdf_hybrid
 
 # # =========================================================
 # # ENV
 # # =========================================================
-# load_dotenv()
+load_dotenv()
 
 # # Safe HuggingFace login (non-blocking)
 # from huggingface_hub import login
@@ -35,20 +35,20 @@
 # # =========================================================
 # # APP INIT (FAST START ONLY)
 # # =========================================================
-# app = FastAPI()
+app = FastAPI()
 
-# logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO)
 
-# app.add_middleware(
-#     CORSMiddleware,
-#     allow_origins=["*"],
-#     allow_credentials=True,
-#     allow_methods=["*"],
-#     allow_headers=["*"],
-# )
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-# UPLOAD_DIR = Path("uploads")
-# UPLOAD_DIR.mkdir(exist_ok=True)
+UPLOAD_DIR = Path("uploads")
+UPLOAD_DIR.mkdir(exist_ok=True)
 
 # # =========================================================
 # # DEBUG (IMPORTANT FOR RENDER TROUBLESHOOTING)
@@ -87,17 +87,17 @@
 #     question: str
 #     top_k: int = 5
 
-# # =========================================================
-# # UTIL
-# # =========================================================
-# def normalize_resume_filename(filename: str) -> str:
-#     ext = Path(filename).suffix or ".pdf"
-#     stem = Path(filename).stem
+# =========================================================
+# UTIL
+# =========================================================
+def normalize_resume_filename(filename: str) -> str:
+    ext = Path(filename).suffix or ".pdf"
+    stem = Path(filename).stem
 
-#     stem = re.sub(r"[^a-z0-9\s_-]", "", stem.lower())
-#     stem = re.sub(r"\s+", "_", stem.strip())
+    stem = re.sub(r"[^a-z0-9\s_-]", "", stem.lower())
+    stem = re.sub(r"\s+", "_", stem.strip())
 
-#     return f"{stem}{ext}"
+    return f"{stem}{ext}"
 
 # # =========================================================
 # # MCP LAZY LOADER (CRITICAL FIX)
@@ -112,24 +112,24 @@
 # # ROUTES
 # # =========================================================
 
-# @app.post("/api/rag/upload")
-# async def upload_pdf(file: UploadFile = File(...)):
-#     try:
-#         file_path = UPLOAD_DIR / normalize_resume_filename(file.filename)
+@app.post("/api/rag/upload")
+async def upload_pdf(file: UploadFile = File(...)):
+    try:
+        file_path = UPLOAD_DIR / normalize_resume_filename(file.filename)
 
-#         with open(file_path, "wb") as f:
-#             f.write(await file.read())
+        with open(file_path, "wb") as f:
+            f.write(await file.read())
 
-#         result = ingest_pdf_hybrid(str(file_path), file_path.name)
+        result = ingest_pdf_hybrid(str(file_path), file_path.name)
 
-#         return {
-#             "message": "uploaded successfully",
-#             "filename": file_path.name,
-#             "result": result
-#         }
+        return {
+            "message": "uploaded successfully",
+            "filename": file_path.name,
+            "result": result
+        }
 
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # @app.post("/api/rag/query")
@@ -169,6 +169,8 @@
 from fastapi import FastAPI
 
 app = FastAPI()
+
+
 
 @app.get("/")
 def root():
