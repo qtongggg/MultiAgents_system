@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from MCP_agent.agent_setup import shutdown_mcp
+from MCP_agent.agent_setup import startup_mcp, shutdown_mcp
 from Agents.resume_agent import run_resume_agent
 from Agents.job_search_agent import run_job_search_agent
 from Agents.orchestrator import run_orchestrator
@@ -61,6 +61,21 @@ def start_scheduler():
 
     scheduler.start()
     print("⏰ Scheduler started → runs daily at 05:45")
+
+# =========================================================
+# FASTAPI LIFESPAN
+# =========================================================
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await startup_mcp()
+
+    # start scheduler
+    start_scheduler()
+
+    yield
+
+    scheduler.shutdown()
+    await shutdown_mcp()
 
 # =========================================================
 # APP INIT
@@ -124,7 +139,7 @@ def normalize_resume_filename(filename: str) -> str:
 # =========================================================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # await startup_mcp()
+    await startup_mcp()
 
     start_scheduler()   # 🔥 AUTO RUN HERE
 
@@ -194,4 +209,3 @@ async def search_resume_api(request: ResumeSearchRequest):
     )
 
     return result
-
