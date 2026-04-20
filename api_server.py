@@ -18,23 +18,23 @@ from Agents.job_search_agent import run_job_search_agent
 from Agents.orchestrator import run_orchestrator
 from tools.pdf_ingester import ingest_pdf_hybrid
 
-# # =========================================================
-# # ENV
-# # =========================================================
+# =========================================================
+# ENV
+# =========================================================
 load_dotenv()
 
-# # Safe HuggingFace login (non-blocking)
-# from huggingface_hub import login
-# hf_token = os.getenv("HF_TOKEN")
-# if hf_token:
-#     try:
-#         login(token=hf_token)
-#     except Exception as e:
-#         print("HF login skipped:", e)
+# Safe HuggingFace login (non-blocking)
+from huggingface_hub import login
+hf_token = os.getenv("HF_TOKEN")
+if hf_token:
+    try:
+        login(token=hf_token)
+    except Exception as e:
+        print("HF login skipped:", e)
 
-# # =========================================================
-# # APP INIT (FAST START ONLY)
-# # =========================================================
+# =========================================================
+# APP INIT (FAST START ONLY)
+# =========================================================
 app = FastAPI()
 
 logging.basicConfig(level=logging.INFO)
@@ -50,42 +50,42 @@ app.add_middleware(
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
 
-# # =========================================================
-# # DEBUG (IMPORTANT FOR RENDER TROUBLESHOOTING)
-# # =========================================================
-# print("🔥 API MODULE LOADED")
+# =========================================================
+# DEBUG (IMPORTANT FOR RENDER TROUBLESHOOTING)
+# =========================================================
+print("🔥 API MODULE LOADED")
 
-# @app.on_event("startup")
-# async def startup_event():
-#     print("🚀 FastAPI STARTED (port should bind soon)")
+@app.on_event("startup")
+async def startup_event():
+    print("🚀 FastAPI STARTED (port should bind soon)")
 
-# @app.on_event("shutdown")
-# async def shutdown_event():
-#     print("🛑 FastAPI shutting down")
-#     await shutdown_mcp()
+@app.on_event("shutdown")
+async def shutdown_event():
+    print("🛑 FastAPI shutting down")
+    await shutdown_mcp()
 
-# # =========================================================
-# # HEALTH CHECK (REQUIRED FOR RENDER)
-# # =========================================================
-# @app.get("/")
-# def root():
-#     return {"status": "running"}
+# =========================================================
+# HEALTH CHECK (REQUIRED FOR RENDER)
+# =========================================================
+@app.get("/")
+def root():
+    return {"status": "running"}
 
-# # =========================================================
-# # REQUEST MODELS
-# # =========================================================
-# class JobSearchRequest(BaseModel):
-#     keyword: str
-#     location: str
-#     per_page: int = 5
+# =========================================================
+# REQUEST MODELS
+# =========================================================
+class JobSearchRequest(BaseModel):
+    keyword: str
+    location: str
+    per_page: int = 5
 
-# class ResumeSearchRequest(BaseModel):
-#     question: str
-#     top_k: int = 5
+class ResumeSearchRequest(BaseModel):
+    question: str
+    top_k: int = 5
 
-# class RagQueryRequest(BaseModel):
-#     question: str
-#     top_k: int = 5
+class RagQueryRequest(BaseModel):
+    question: str
+    top_k: int = 5
 
 # =========================================================
 # UTIL
@@ -99,18 +99,18 @@ def normalize_resume_filename(filename: str) -> str:
 
     return f"{stem}{ext}"
 
-# # =========================================================
-# # MCP LAZY LOADER (CRITICAL FIX)
-# # =========================================================
-# async def safe_mcp():
-#     try:
-#         await ensure_mcp()
-#     except Exception as e:
-#         print("⚠ MCP failed but API continues:", e)
+# =========================================================
+# MCP LAZY LOADER (CRITICAL FIX)
+# =========================================================
+async def safe_mcp():
+    try:
+        await ensure_mcp()
+    except Exception as e:
+        print("⚠ MCP failed but API continues:", e)
 
-# # =========================================================
-# # ROUTES
-# # =========================================================
+# =========================================================
+# ROUTES
+# =========================================================
 
 @app.post("/api/rag/upload")
 async def upload_pdf(file: UploadFile = File(...)):
@@ -132,46 +132,36 @@ async def upload_pdf(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# @app.post("/api/rag/query")
-# async def query_rag(payload: RagQueryRequest):
-#     await safe_mcp()
+@app.post("/api/rag/query")
+async def query_rag(payload: RagQueryRequest):
+    await safe_mcp()
 
-#     response = await run_orchestrator(payload.question, payload.top_k)
+    response = await run_orchestrator(payload.question, payload.top_k)
 
-#     return response
-
-
-# @app.post("/api/jobs/search")
-# async def search_jobs_api(request: JobSearchRequest):
-#     await safe_mcp()
-
-#     return await run_job_search_agent(
-#         keyword=request.keyword,
-#         location=request.location,
-#         per_page=request.per_page,
-#     )
+    return response
 
 
-# @app.post("/api/jobs/resume")
-# async def search_resume_api(request: ResumeSearchRequest):
-#     await safe_mcp()
+@app.post("/api/jobs/search")
+async def search_jobs_api(request: JobSearchRequest):
+    await safe_mcp()
 
-#     return await run_resume_agent(
-#         question=request.question,
-#         top_k=request.top_k
-#     )
+    return await run_job_search_agent(
+        keyword=request.keyword,
+        location=request.location,
+        per_page=request.per_page,
+    )
 
 
-# @app.get("/")
-# def root():
-#     return {"status": "ok"}
+@app.post("/api/jobs/resume")
+async def search_resume_api(request: ResumeSearchRequest):
+    await safe_mcp()
 
-from fastapi import FastAPI
-
-app = FastAPI()
-
+    return await run_resume_agent(
+        question=request.question,
+        top_k=request.top_k
+    )
 
 
 @app.get("/")
 def root():
-    return {"ok": "render works"}
+    return {"status": "ok"}
