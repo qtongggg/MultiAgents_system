@@ -1,8 +1,5 @@
 import os
-import time
-import json
 import asyncio
-import requests
 import logging
 import re
 
@@ -23,15 +20,18 @@ from Agents.orchestrator import run_orchestrator
 from tools.pdf_ingester import ingest_pdf_hybrid
 
 # =========================================================
-# LOAD ENV + AUTH
+# LOAD ENV
 # =========================================================
 load_dotenv()
 
+# Safe HF login (no crash if missing)
 from huggingface_hub import login
-login(token=os.getenv("HF_TOKEN"))
+hf_token = os.getenv("HF_TOKEN")
+if hf_token:
+    login(token=hf_token)
 
 # =========================================================
-# SCHEDULER SETUP
+# SCHEDULER
 # =========================================================
 scheduler = AsyncIOScheduler()
 
@@ -58,22 +58,25 @@ def start_scheduler():
         hour=17,
         minute=45
     )
-
     scheduler.start()
-    print("⏰ Scheduler started → runs daily at 05:45")
+    print("⏰ Scheduler started")
 
 # =========================================================
-# FASTAPI LIFESPAN
+# LIFESPAN (NON-BLOCKING STARTUP)
 # =========================================================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await startup_mcp()
+    print("🚀 App starting...")
 
-    # start scheduler
+    # MCP still background (non-blocking)
+    asyncio.create_task(startup_mcp())
+
+    # ✅ scheduler runs in main loop (NOT thread)
     start_scheduler()
 
     yield
 
+    print("🛑 App shutting down...")
     scheduler.shutdown()
     await shutdown_mcp()
 
@@ -86,13 +89,7 @@ logging.basicConfig(level=logging.INFO)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:3001",
-        "http://127.0.0.1:3000",
-        "http://127.0.0.1:3001",
-        "http://192.168.0.234:3001",
-    ],
+    allow_origins=["*"],  # allow all for now (simplify deployment)
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -100,6 +97,13 @@ app.add_middleware(
 
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+# =========================================================
+# TEST ROUTE (IMPORTANT)
+# =========================================================
+@app.get("/")
+def root():
+    return {"status": "running"}
 
 # =========================================================
 # REQUEST MODELS
@@ -118,7 +122,7 @@ class ResumeSearchRequest(BaseModel):
     top_k: int = 5
 
 # =========================================================
-# UTIL: normalize filename
+# UTIL
 # =========================================================
 def normalize_resume_filename(filename: str) -> str:
     ext = Path(filename).suffix.lower() or ".pdf"
@@ -135,42 +139,21 @@ def normalize_resume_filename(filename: str) -> str:
     return f"{stem}{ext}"
 
 # =========================================================
-# STARTUP LIFESPAN
+# ROUTES
 # =========================================================
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    await startup_mcp()
-
-    start_scheduler()   # 🔥 AUTO RUN HERE
-
-    yield
-
-    scheduler.shutdown()
-    await shutdown_mcp()
-
-app.router.lifespan_context = lifespan
-
-# =========================================================
-# API ROUTES
-# =========================================================
-
 @app.post("/api/rag/upload")
 async def upload_pdf(file: UploadFile = File(...)):
     try:
-        uploads_dir = Path("uploads")
-        uploads_dir.mkdir(parents=True, exist_ok=True)
-
-        normalized_filename = normalize_resume_filename(file.filename)
-        file_path = uploads_dir / normalized_filename
+        file_path = UPLOAD_DIR / normalize_resume_filename(file.filename)
 
         with open(file_path, "wb") as f:
             f.write(await file.read())
 
-        result = ingest_pdf_hybrid(str(file_path), normalized_filename)
+        result = ingest_pdf_hybrid(str(file_path), file_path.name)
 
         return {
             "message": "PDF uploaded and ingested successfully",
-            "filename": normalized_filename,
+            "filename": file_path.name,
             "result": result,
         }
 
@@ -192,20 +175,16 @@ async def query_rag(payload: RagQueryRequest):
 
 @app.post("/api/jobs/search")
 async def search_jobs_api(request: JobSearchRequest):
-    result = await run_job_search_agent(
+    return await run_job_search_agent(
         keyword=request.keyword,
         location=request.location,
         per_page=request.per_page,
     )
 
-    return result
-
 
 @app.post("/api/jobs/resume")
 async def search_resume_api(request: ResumeSearchRequest):
-    result = await run_resume_agent(
+    return await run_resume_agent(
         question=request.question,
         top_k=request.top_k
     )
-
-    return result
