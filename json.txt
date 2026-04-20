@@ -1,0 +1,18 @@
+{
+  "data": {
+    "keyword": "AI engineer in Malaysia",
+    "location": "Malaysia"
+  }
+}
+
+{
+  "data": {
+    "pdf_path": "C:\\Users\\User\\Downloads\\MAH_QING_TONG_Resume_(2).pdf"
+  }
+}
+
+{
+  "data": {
+    "question": "what is the resume about"
+  }
+}
