@@ -1,13 +1,75 @@
-# Python-generated files
-
+# ------------------------
+# Python
+# ------------------------
 __pycache__/
-*.py[oc]
+*.py[cod]
+*.pyo
+*.pyd
 build/
 dist/
 wheels/
 *.egg-info
-node_modules/
-logs/
 
 # Virtual environments
-.venv
+.venv/
+venv/
+
+# ------------------------
+# Environment variables (SECRETS)
+# ------------------------
+.env
+
+# ------------------------
+# Logs
+# ------------------------
+*.log
+logs/
+
+# ------------------------
+# Node / Next.js
+# ------------------------
+node_modules/
+frontend/node_modules/
+frontend/.next/
+
+# ------------------------
+# Next.js build / cache
+# ------------------------
+.next/
+out/
+
+# ------------------------
+# AI / RAG data (IMPORTANT)
+# ------------------------
+uploads/
+*.pdf
+*.pkl
+*.joblib
+*.bin
+*.pt
+
+# Vector DB / embeddings
+qdrant_storage/
+faiss_index/
+
+# ------------------------
+# Credentials / keys (VERY IMPORTANT)
+# ------------------------
+*.pem
+credentials.json
+token.json
+Agents/token.json
+
+# ------------------------
+# OS / Editor
+# ------------------------
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# ------------------------
+# Misc
+# ------------------------
+*.lock
+uv.lock
