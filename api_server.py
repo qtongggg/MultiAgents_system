@@ -63,21 +63,6 @@ def start_scheduler():
     print("⏰ Scheduler started → runs daily at 05:45")
 
 # =========================================================
-# FASTAPI LIFESPAN
-# =========================================================
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    await startup_mcp()
-
-    # start scheduler
-    start_scheduler()
-
-    yield
-
-    scheduler.shutdown()
-    await shutdown_mcp()
-
-# =========================================================
 # APP INIT
 # =========================================================
 app = FastAPI(lifespan=lifespan)
