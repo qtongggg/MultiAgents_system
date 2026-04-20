@@ -1,6 +1,6 @@
 fastapi
 uvicorn
-python-3.11.9
+
 pydantic
 python-dotenv
 requests
