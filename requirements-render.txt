@@ -13,4 +13,6 @@ tiktoken>=0.7.0
 
 python-multipart>=0.0.9
 apscheduler
-mcp
+
+model-context-protocol
+langchain-mcp-adapters
