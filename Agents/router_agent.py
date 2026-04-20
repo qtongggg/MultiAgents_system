@@ -41,33 +41,34 @@ async def detect_intent_with_llm(question: str) -> dict:
     "company_name": "string or null",
     "location": "string or null",
     "candidate_name": "string or null"
+    "number": "int or null"
     }}
 
     Examples:
 
-    User: Show me jobs from Grab in Malaysia
+    User: Show me 5 jobs from Grab in Malaysia
     Output:
-    {{"intent": "job_search", "company_name": "Grab", "location": "Malaysia", "candidate_name": null}}
+    {{"intent": "job_search", "company_name": "Grab", "location": "Malaysia", "candidate_name": null, "number": 5}}
 
     User: Summarize the company Grab
     Output:
-    {{"intent": "job_details", "company_name": "Grab", "location": null, "candidate_name": null}}
+    {{"intent": "job_details", "company_name": "Grab", "location": null, "candidate_name": null, "number": null}}
 
     User: Give me the resume of Hoo Vi Ying
     Output:
-    {{"intent": "resume", "company_name": null, "location": null, "candidate_name": "hoo_vi_ying"}}
+    {{"intent": "resume", "company_name": null, "location": null, "candidate_name": "hoo_vi_ying", "number": null}}
 
     User: Summarize Mah Qing Tong's profile
     Output:
-    {{"intent": "resume", "company_name": null, "location": null, "candidate_name": "mah_qing_tong"}}
+    {{"intent": "resume", "company_name": null, "location": null, "candidate_name": "mah_qing_tong", "number": null}}
 
     User: What skills does this candidate have?
     Output:
-    {{"intent": "resume", "company_name": null, "location": null, "candidate_name": null}}
+    {{"intent": "resume", "company_name": null, "location": null, "candidate_name": null, "number": null}}
 
     User: What is RAG?
     Output:
-    {{"intent": "qa", "company_name": null, "location": null, "candidate_name": null}}
+    {{"intent": "qa", "company_name": null, "location": null, "candidate_name": null, "number": null}}
 
     User question:
     {question}
@@ -85,6 +86,7 @@ async def detect_intent_with_llm(question: str) -> dict:
         company_name = parsed.get("company_name", None)
         location = parsed.get("location", None)
         candidate_name = parsed.get("candidate_name", None)
+        number = parsed.get("number", None)
 
         allowed_intents = {"resume", "job_details", "job_search", "qa"}
         if intent not in allowed_intents:
@@ -95,6 +97,7 @@ async def detect_intent_with_llm(question: str) -> dict:
             "company_name": company_name,
             "location": location,
             "candidate_name": candidate_name,
+            "number": number
         }
 
     except json.JSONDecodeError:
@@ -103,6 +106,7 @@ async def detect_intent_with_llm(question: str) -> dict:
             "company_name": None,
             "location": None,
             "candidate_name": None,
+            "number": None
         }
 
 

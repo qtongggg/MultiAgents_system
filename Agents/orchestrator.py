@@ -40,12 +40,15 @@ async def run_orchestrator(question: str, top_k: int = 5) -> Dict[str, Any]:
         # ------------------------
 
         rewrite_resp = await rewrite_query_with_llm(question)
+    
+
         logger.info(f"[Orchestrator] rewrite response: {rewrite_resp}")
         intent_resp = await detect_intent_with_llm(question)
 
         query_intent = intent_resp.get("intent", "qa")
         company_name = intent_resp.get("company_name")
         location = intent_resp.get("location")
+        number = intent_resp.get("number") if intent_resp.get("number") is not None else top_k
 
         rewritten_query = rewrite_resp.get("rewritten_query", question)
 
@@ -55,7 +58,7 @@ async def run_orchestrator(question: str, top_k: int = 5) -> Dict[str, Any]:
         # Step 2: route to agent
         # ------------------------
         if query_intent == "resume":
-            raw_result = await run_resume_agent(rewritten_query, top_k)
+            raw_result = await run_resume_agent(rewritten_query, top_k=number)
 
         elif query_intent == "job_details":
             raw_result = await job_details_agent(
@@ -63,13 +66,14 @@ async def run_orchestrator(question: str, top_k: int = 5) -> Dict[str, Any]:
                 company_name=company_name,
                 location=location,
                 top_k=top_k
+
             )
-            
+                    
         elif query_intent == "job_search":
             raw_result = await run_job_search_agent(
                 keyword=rewritten_query,
                 location=location or "Malaysia",
-                per_page= 2
+                per_page= number
             )
         else:
             raw_result = await run_qa_agent(rewritten_query)
