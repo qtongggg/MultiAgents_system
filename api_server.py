@@ -209,3 +209,4 @@ async def search_resume_api(request: ResumeSearchRequest):
     )
 
     return result
+

@@ -579,6 +579,12 @@ def normalize_tool_result(result, tool_name: str) -> dict:
 # FAST PIPELINE (NO AGENT LOOP)
 # ---------------------------------------------------------------------------
 
+import asyncio
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 async def run_job_search_agent(
     keyword: str,
     location: str = "Malaysia",
@@ -589,22 +595,37 @@ async def run_job_search_agent(
         tools = await get_mcp_tools()
 
         logger.info("[FAST PIPELINE] tools loaded: %s", list(tools.keys()))
+        logger.info("[FAST PIPELINE] INPUT keyword=%s location=%s", keyword, location)
 
         # -------------------------
         # 1. SEARCH JOBS
         # -------------------------
-        logger.info("[FAST PIPELINE] Step 1: search_jobs")
+        logger.info("[FAST PIPELINE] Step 1: search_jobs_tool")
 
-        search_result = await tools["search_jobs_tool"].ainvoke({
+        raw_search_result = await tools["search_jobs_tool"].ainvoke({
             "keyword": keyword,
             "location": location,
-            "per_page": per_page
+            "per_page": per_page,
         })
 
+        logger.info("[RAW TOOL OUTPUT] search_jobs_tool: %s", raw_search_result)
 
-        search_result = normalize_tool_result(search_result, "search_jobs")
-        jobs = search_result.get("jobs", [])
+        search_result = normalize_tool_result(raw_search_result, "search_jobs")
 
+        # Safe extraction (handles multiple schemas)
+        jobs = (
+            search_result.get("jobs")
+            or search_result.get("data")
+            or search_result.get("result", {}).get("jobs")
+            or []
+        )
+
+        # Safety check
+        if not isinstance(jobs, list):
+            logger.error("[FAST PIPELINE] Invalid jobs type: %s", type(jobs))
+            jobs = []
+
+        logger.info("[FAST PIPELINE] search_jobs extracted %d jobs", len(jobs))
 
         if not jobs:
             return {
@@ -616,43 +637,55 @@ async def run_job_search_agent(
         # 2. MATCH JOBS (if resume exists)
         # -------------------------
         if resume_source_id and tools.get("match_jobs_tool"):
-            logger.info("[FAST PIPELINE] Step 2: match_jobs")
+            logger.info("[FAST PIPELINE] Step 2: match_jobs_tool")
 
-            match_result = await tools["match_jobs_tool"].ainvoke({
+            raw_match_result = await tools["match_jobs_tool"].ainvoke({
                 "resume_source_id": resume_source_id,
                 "jobs": jobs
             })
 
-            match_result = normalize_tool_result(match_result, "match_jobs")
-            jobs = match_result.get("jobs", jobs)
+            logger.info("[RAW TOOL OUTPUT] match_jobs_tool: %s", raw_match_result)
+
+            match_result = normalize_tool_result(raw_match_result, "match_jobs")
+
+            jobs = (
+                match_result.get("jobs")
+                or jobs
+            )
 
         # -------------------------
-        # 3. PARALLEL: INGEST
+        # 3. PARALLEL: INGEST (non-blocking)
         # -------------------------
-        logger.info("[FAST PIPELINE] Step 3: ingest_jobs (async)")
+        logger.info("[FAST PIPELINE] Step 3: ingest_jobs_tool (async)")
 
         ingest_task = asyncio.create_task(
             tools["ingest_jobs_tool"].ainvoke({"jobs": jobs})
         )
 
         # -------------------------
-        # 4. SUMMARIZE (DO NOT WAIT INGEST)
+        # 4. SUMMARIZE
         # -------------------------
-        logger.info("[FAST PIPELINE] Step 4: summarize_jobs")
+        logger.info("[FAST PIPELINE] Step 4: summarize_jobs_tool")
 
-        summarize_result = await tools["summarize_jobs_tool"].ainvoke({
+        raw_summarize_result = await tools["summarize_jobs_tool"].ainvoke({
             "jobs": jobs,
-            "resume": resume_source_id 
+            "resume": resume_source_id
         })
 
-        summarize_result = normalize_tool_result(summarize_result, "summarize_jobs")
-        final_jobs = summarize_result.get("jobs", jobs)
+        logger.info("[RAW TOOL OUTPUT] summarize_jobs_tool: %s", raw_summarize_result)
+
+        summarize_result = normalize_tool_result(raw_summarize_result, "summarize_jobs")
+
+        final_jobs = (
+            summarize_result.get("jobs")
+            or jobs
+        )
 
         # ensure ingestion completes in background
         try:
             await ingest_task
-        except Exception:
-            logger.warning("[FAST PIPELINE] ingest_jobs failed (non-blocking)")
+        except Exception as e:
+            logger.warning("[FAST PIPELINE] ingest_jobs failed (non-blocking): %s", str(e))
 
         # -------------------------
         # DONE
@@ -660,7 +693,7 @@ async def run_job_search_agent(
         return {
             "result": {
                 "jobs": final_jobs,
-                "iterations": 1  # no loop anymore
+                "iterations": 1
             },
             "mode": "job_search"
         }

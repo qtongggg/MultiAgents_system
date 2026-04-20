@@ -22,6 +22,7 @@ import logging
 import os
 
 
+
 qdrant = QdrantClient(url=os.getenv("QDRANT_URL", "http://localhost:6333"))
 RESUME_COLLECTION_HYBRID = "pdf_chunks_hybrid"
 # ============================================================================
@@ -272,10 +273,12 @@ def search_jobs_tool(keyword: str, location: str = "Malaysia", per_page: int = 5
         jobs = search_jobs(
             clean_keyword,
             clean_location,
-            page=random_page,
+            page=1,
             per_page=per_page + 3
         )
         
+        logger.info(f"API search returned {len(jobs)} jobs before cleaning")
+
         # Clean and filter results
         results = clean_job_results(jobs)
         # results = post_filter_jobs(results, parsed)

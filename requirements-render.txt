@@ -1,0 +1,14 @@
+# requirements.txt (PRODUCTION ONLY)
+
+fastapi>=0.110.0
+uvicorn>=0.31.1
+
+pydantic>=2.11.0
+python-dotenv>=1.0.1
+requests>=2.32.2
+
+qdrant-client>=1.7.0
+openai>=2.26.0
+tiktoken>=0.7.0
+
+python-multipart>=0.0.9
