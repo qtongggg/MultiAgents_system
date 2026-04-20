@@ -1,18 +1,15 @@
-# requirements.txt (PRODUCTION ONLY)
+fastapi
+uvicorn
+python-3.11.9
+pydantic
+python-dotenv
+requests
 
-fastapi>=0.110.0
-uvicorn>=0.31.1
+qdrant-client
+openai
+tiktoken
 
-pydantic>=2.11.0
-python-dotenv>=1.0.1
-requests>=2.32.2
-
-qdrant-client>=1.7.0
-openai>=2.26.0
-tiktoken>=0.7.0
-
-python-multipart>=0.0.9
+python-multipart
 apscheduler
 
-model-context-protocol
-langchain-mcp-adapters
+git+https://github.com/langchain-ai/langchain-mcp-adapters.git
