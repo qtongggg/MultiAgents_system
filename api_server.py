@@ -61,23 +61,26 @@ def start_scheduler():
     scheduler.start()
     print("⏰ Scheduler started")
 
+
+async def init_mcp_safe():
+    try:
+        print("🔧 Starting MCP...")
+        await startup_mcp()
+        print("✅ MCP ready")
+    except Exception as e:
+        print("❌ MCP failed but API still running:", e)
 # =========================================================
 # LIFESPAN (NON-BLOCKING STARTUP)
 # =========================================================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("🚀 App starting...")
+    print("🚀 FastAPI starting (non-blocking MCP)...")
 
-    # MCP still background (non-blocking)
-    asyncio.create_task(startup_mcp())
-
-    # ✅ scheduler runs in main loop (NOT thread)
-    start_scheduler()
+    # Start MCP in background (DO NOT block API)
+    asyncio.create_task(init_mcp_safe())
 
     yield
 
-    print("🛑 App shutting down...")
-    scheduler.shutdown()
     await shutdown_mcp()
 
 # =========================================================
