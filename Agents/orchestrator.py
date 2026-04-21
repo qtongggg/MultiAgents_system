@@ -7,6 +7,7 @@ from Agents.job_search_agent import run_job_search_agent
 from Agents.company_summary_agent import job_details_agent
 from Agents.qa_agent import run_qa_agent
 from Agents.router_agent import rewrite_query_with_llm, detect_intent_with_llm
+from Agents.email_agent import run_email_agent
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +76,10 @@ async def run_orchestrator(question: str, top_k: int = 5) -> Dict[str, Any]:
                 location=location or "Malaysia",
                 per_page= number
             )
+
+            email_agent_result = await run_email_agent(context=str(raw_result['result'].get('jobs', [])))
+            logger.info(f"Email agent result: {email_agent_result}")  
+
         else:
             raw_result = await run_qa_agent(rewritten_query)
 

@@ -2,6 +2,7 @@ import os
 import json
 import logging
 import asyncio
+from marshmallow import pprint
 from openai import AsyncOpenAI
 from dotenv import load_dotenv
 from MCP_agent.agent_setup import get_mcp_tools
@@ -690,6 +691,9 @@ async def run_job_search_agent(
         # -------------------------
         # DONE
         # -------------------------
+
+        
+
         return {
             "result": {
                 "jobs": final_jobs,
@@ -701,3 +705,5 @@ async def run_job_search_agent(
     except Exception as e:
         logger.exception("[FAST PIPELINE] FAILED")
         return {"error": str(e)}
+
+
