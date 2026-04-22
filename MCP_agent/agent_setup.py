@@ -28,6 +28,8 @@ _session = None
 _tool_map = None
 
 
+import anyio
+
 async def startup_mcp():
     global _stdio_cm, _session_cm, _session, _tool_map
 
@@ -35,39 +37,54 @@ async def startup_mcp():
         logger.info("[MCP] already started")
         return _tool_map
 
-    _stdio_cm = stdio_client(server_params)
-    read, write = await _stdio_cm.__aenter__()
+    try:
+        logger.info("[MCP] starting stdio client...")
 
-    _session_cm = ClientSession(read, write)
-    _session = await _session_cm.__aenter__()
-    await _session.initialize()
+        _stdio_cm = stdio_client(server_params)
+        read, write = await _stdio_cm.__aenter__()
 
-    tools_list = await load_mcp_tools(_session)
-    _tool_map = {tool.name: tool for tool in tools_list}
+        _session_cm = ClientSession(read, write)
+        _session = await _session_cm.__aenter__()
 
-    logger.info("[MCP] persistent session ready")
-    logger.info("[MCP] loaded tools: %s", list(_tool_map.keys()))
-    return _tool_map
+        # 🔥 IMPORTANT: small stabilization delay
+        await anyio.sleep(0.2)
+
+        await _session.initialize()
+
+        tools_list = await load_mcp_tools(_session)
+        _tool_map = {tool.name: tool for tool in tools_list}
+
+        logger.info("[MCP] persistent session ready")
+        logger.info("[MCP] tools loaded: %s", list(_tool_map.keys()))
+
+        return _tool_map
+
+    except Exception as e:
+        logger.error(f"[MCP] startup failed: {e}", exc_info=True)
+
+        # 🔥 cleanup partial state (VERY IMPORTANT)
+        await shutdown_mcp()
+
+        raise
 
 
 async def shutdown_mcp():
     global _stdio_cm, _session_cm, _session, _tool_map
 
-    logger.info("[MCP] shutting down persistent session")
-
     try:
-        if _session_cm is not None:
+        if _session_cm:
             await _session_cm.__aexit__(None, None, None)
-    finally:
-        _session_cm = None
-        _session = None
 
-    try:
-        if _stdio_cm is not None:
+        if _stdio_cm:
             await _stdio_cm.__aexit__(None, None, None)
+
     finally:
-        _stdio_cm = None
+        _session = None
         _tool_map = None
+        _session_cm = None
+        _stdio_cm = None
+
+    logger.info("[MCP] shutdown complete")
 
 
 async def get_mcp_tools():

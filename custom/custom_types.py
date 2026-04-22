@@ -1,4 +1,4 @@
-from import BaseModel
+from pydantic import BaseModel
 from typing import List
 
 # class RAGChunkAndSrc(BaseModel):
@@ -38,6 +38,4 @@ class JobSearchInfo(BaseModel):
 
 class SummaryJobInfo(BaseModel):
     brief_summary: str
-    hr_insight: str
-
-
+    hr_insights: str

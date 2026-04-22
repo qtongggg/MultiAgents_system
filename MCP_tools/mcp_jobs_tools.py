@@ -15,15 +15,16 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import Filter, FieldCondition, MatchValue
 from langchain_core.prompts import ChatPromptTemplate
 from LLM.llm import llm
-
+from custom.custom_types import MatchResult
 import logging
 from pathlib import Path
 import logging
 import os
 
+def get_qdrant():
+    return QdrantClient(url=os.getenv("QDRANT_URL", "http://localhost:6333"))
 
 
-qdrant = QdrantClient(url=os.getenv("QDRANT_URL", "http://localhost:6333"))
 RESUME_COLLECTION_HYBRID = "pdf_chunks_hybrid"
 # ============================================================================
 # Logging Configuration
@@ -82,7 +83,6 @@ def error_response(tool: str, error: str, jobs: list | None = None, meta: dict |
 # Qdrant Client Configuration
 # ============================================================================
 
-qdrant = QdrantClient(url=os.getenv("QDRANT_URL", "http://localhost:6333"))
 RESUME_COLLECTION = "pdf_chunks_hybrid"
 
 
@@ -99,7 +99,7 @@ def fetch_resume_text(resume_source_id: str, limit: int = 30) -> str:
     """
     for key in ["source_id", "source"]:
         try:
-            results, _ = qdrant.scroll(
+            results, _ = get_qdrant().scroll(
                 collection_name=RESUME_COLLECTION,
                 scroll_filter=Filter(
                     must=[FieldCondition(key=key, match=MatchValue(value=resume_source_id))]
@@ -311,7 +311,7 @@ def search_jobs_tool(keyword: str, location: str = "Malaysia", per_page: int = 5
 # Tool 2: Match Jobs with Resume
 # ============================================================================
 
-from custom.custom_types import MatchResult
+
 
 @mcp.tool()
 def match_jobs_tool(resume_source_id: str, jobs: list[dict]) -> dict:
@@ -328,7 +328,7 @@ def match_jobs_tool(resume_source_id: str, jobs: list[dict]) -> dict:
         prompt = ChatPromptTemplate.from_template("""
         You are a resume-job matching assistant.
 
-        Evaluate how well the candidate matches the job.
+        Your task is to evaluate how well a candidate's resume matches a job.
 
         Resume:
         {resume}
@@ -338,6 +338,33 @@ def match_jobs_tool(resume_source_id: str, jobs: list[dict]) -> dict:
         Company: {company}
         Location: {location}
         Description: {job_description}
+
+        Return ONLY one valid JSON object in exactly this format:
+        {{
+        "fit_score": 0.0,
+        "matching_skills": [],
+        "missing_skills": [],
+        "reason": ""
+        }}
+
+        Strict output rules:
+        - Return ONLY the JSON object
+        - Do NOT wrap the JSON in markdown fences
+        - Do NOT output ```json
+        - Do NOT output ```
+        - Do NOT include any explanation, heading, notes, or extra text
+        - Do NOT add text before or after the JSON
+        - fit_score must be a float from 0.0 to 1.0 and fit_score should not be none
+
+        Scoring rules:
+        - Working experience is one of the MOST IMPORTANT factors in scoring
+        - Pay very close attention to explicit experience requirements in the job description
+        - Compare the candidate's resume experience against the required years/level in the job
+        - If the resume does NOT clearly meet the required years of experience, reduce the fit_score significantly
+        - If the role is for fresh graduates / junior / entry-level and the resume matches, increase the fit_score
+        - matching_skills: short skill/tool names found in BOTH resume and job; may include matched experience level phrases
+        - missing_skills: short skill names, tool names, and important missing experience requirements; max 10 items
+        - reason: 2-3 sentences explicitly mentioning whether the candidate meets, partially meets, or does not meet the required experience level
         """)
 
         # ✅ Structured LLM (KEY CHANGE)
@@ -465,64 +492,102 @@ def make_agent_state():
 # ============================================================================
 # Tool 4: Summarize Jobs
 # ============================================================================
-
-from custom.custom_types import SummaryJobInfo
 @mcp.tool()
 def summarize_jobs_tool(jobs: list[dict], resume: str) -> dict:
     tool_name = "summarize_jobs_tool"
+    
 
     try:
+        # ✅ Proper validation
         if not isinstance(jobs, list) or not all(isinstance(j, dict) for j in jobs):
-            return error_response(tool_name, "jobs must be list of dicts")
+            logger.error(f"Invalid input: jobs must be a list of dicts, got {type(jobs)}")
+            return error_response(tool=tool_name, error="Invalid input: jobs must be a list of dicts")
 
         if not jobs:
-            return ok_response(tool_name, [], {"count": 0})
+            logger.info("No jobs to summarize")
+            return ok_response(tool=tool_name, jobs=[], meta={"count": 0})
 
-        logger.info(f"Summarizing {len(jobs)} jobs")
+        logger.info(f"Summarizing {len(jobs)} jobs (per-job mode)")
 
+        # ✅ Per-job prompt (NO LIST → no dropping)
         prompt = ChatPromptTemplate.from_template("""
-        You are a professional HR assistant.
+            You are a professional HR assistant and job summarization expert.
 
-        Job:
-        {job}
+            Job:
+            {job}
 
-        Resume:
-        {resume}
+            Candidate Resume:
+            {resume}
 
-        Return structured output:
-        - brief_summary: 5–7 sentence job summary
-        - hr_insight: short hiring perspective based on resume match
-        """)
+            Task:
+            - Write a clean 5~7 sentence professional summary for this job.
+            - Highlight the main responsibilities, required skills/tech stack, and the type of candidate who would excel.
+            - Optionally provide a short HR-style insight or second opinion on the candidate fit based on the resume.
 
-        # ✅ STRUCTURED OUTPUT (KEY FIX)
-        structured_llm = llm.with_structured_output(SummaryJobInfo)
-        chain = prompt | structured_llm
+            Return ONLY JSON:
+            {{
+            "brief_summary": "",
+            "hr_insight": ""
+            }}
+
+            Rules:
+            - Do NOT include any extra text.
+            - Do NOT wrap in markdown.
+            - Keep it concise, professional, and actionable.
+            - Focus on providing both a summary of the role and a human-like assessment.
+            """)
+
+        chain = prompt | llm
 
         summarized_jobs = []
 
-        for job in jobs:
+        for idx, job in enumerate(jobs):
             try:
-                parsed: SummaryJobInfo = chain.invoke({
+                response = chain.invoke({
                     "job": json.dumps(job, ensure_ascii=False),
                     "resume": resume
+
                 })
 
+                raw = response.content if hasattr(response, "content") else str(response)
+                parsed = json.loads(raw)
+
+                brief_summary = parsed.get("brief_summary", "")
+                hr_insight = parsed.get("hr_insight", "")
+
+                # ✅ Merge safely (NO DATA LOSS)
                 enriched = {
                     **job,
-                    "brief_summary": parsed.brief_summary,
-                    "hr_insight": parsed.hr_insight,
+                    "brief_summary": brief_summary or job.get("brief_summary", ""),
+                    "fit_score": float(job.get("fit_score", 0.0) or 0.0),
+                    "matching_skills": job.get("matching_skills", []) or [],
+                    "missing_skills": job.get("missing_skills", []) or [],
+                    "reason": job.get("reason", "") or "",
                 }
+                
+
 
                 summarized_jobs.append(enriched)
 
-            except Exception as e:
-                logger.warning(f"[SUMMARY FAILED] {job.get('title')} → {e}")
+                logger.debug(f"[Summarize] {idx+1}/{len(jobs)} OK: {job.get('title')}")
 
+            except Exception as e:
+                logger.warning(f"[Summarize] Failed for job '{job.get('title', '')}': {str(e)}")
+
+                # ✅ FAIL-SAFE → never drop job
                 summarized_jobs.append({
                     **job,
                     "brief_summary": job.get("brief_summary", ""),
-                    "hr_insight": f"Summary failed: {str(e)}",
+                    "fit_score": float(job.get("fit_score", 0.0) or 0.0),
+                    "matching_skills": job.get("matching_skills", []) or [],
+                    "missing_skills": job.get("missing_skills", []) or [],
+                    "reason": job.get("reason", f"Summarization failed: {str(e)}"),
                 })
+
+        global _last_jobs
+        _last_jobs = summarized_jobs
+
+        logger.info(f"Summarization completed: {len(summarized_jobs)} jobs")
 
         return ok_response(
             tool=tool_name,
@@ -531,13 +596,12 @@ def summarize_jobs_tool(jobs: list[dict], resume: str) -> dict:
         )
 
     except Exception as e:
-        return error_response(tool_name, str(e))
+        logger.error(f"summarize_jobs_tool failed: {str(e)}", exc_info=True)
+        return error_response(tool=tool_name, error=str(e))
         
 # ============================================================================
 # Tool 5: analyze_query_with_llm
 # ============================================================================
-
-qdrant_client = QdrantClient(url="http://localhost:6333")
 
 @mcp.tool()
 def analyze_query_with_llm(question: str) -> dict:
@@ -683,7 +747,7 @@ def search_resume(question: str, top_k: int, candidate_name: str | None = None) 
         if candidate_name:
             target_source_id = candidate_name + "_resume.pdf"
 
-        response = qdrant_client.query_points(
+        response = get_qdrant().query_points(
             collection_name=RESUME_COLLECTION_HYBRID,
             prefetch=[
                 models.Prefetch(
