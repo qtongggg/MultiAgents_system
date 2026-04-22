@@ -38,6 +38,6 @@ class JobSearchInfo(BaseModel):
 
 class SummaryJobInfo(BaseModel):
     brief_summary: str
-    hr_insights: str
+    hr_insight: str
 
 

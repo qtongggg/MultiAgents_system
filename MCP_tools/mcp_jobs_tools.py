@@ -465,102 +465,64 @@ def make_agent_state():
 # ============================================================================
 # Tool 4: Summarize Jobs
 # ============================================================================
+
+from custom.custom_types import SummaryJobInfo
 @mcp.tool()
 def summarize_jobs_tool(jobs: list[dict], resume: str) -> dict:
     tool_name = "summarize_jobs_tool"
-    
 
     try:
-        # ✅ Proper validation
         if not isinstance(jobs, list) or not all(isinstance(j, dict) for j in jobs):
-            logger.error(f"Invalid input: jobs must be a list of dicts, got {type(jobs)}")
-            return error_response(tool=tool_name, error="Invalid input: jobs must be a list of dicts")
+            return error_response(tool_name, "jobs must be list of dicts")
 
         if not jobs:
-            logger.info("No jobs to summarize")
-            return ok_response(tool=tool_name, jobs=[], meta={"count": 0})
+            return ok_response(tool_name, [], {"count": 0})
 
-        logger.info(f"Summarizing {len(jobs)} jobs (per-job mode)")
+        logger.info(f"Summarizing {len(jobs)} jobs")
 
-        # ✅ Per-job prompt (NO LIST → no dropping)
         prompt = ChatPromptTemplate.from_template("""
-            You are a professional HR assistant and job summarization expert.
+        You are a professional HR assistant.
 
-            Job:
-            {job}
+        Job:
+        {job}
 
-            Candidate Resume:
-            {resume}
+        Resume:
+        {resume}
 
-            Task:
-            - Write a clean 5~7 sentence professional summary for this job.
-            - Highlight the main responsibilities, required skills/tech stack, and the type of candidate who would excel.
-            - Optionally provide a short HR-style insight or second opinion on the candidate fit based on the resume.
+        Return structured output:
+        - brief_summary: 5–7 sentence job summary
+        - hr_insight: short hiring perspective based on resume match
+        """)
 
-            Return ONLY JSON:
-            {{
-            "brief_summary": "",
-            "hr_insight": ""
-            }}
-
-            Rules:
-            - Do NOT include any extra text.
-            - Do NOT wrap in markdown.
-            - Keep it concise, professional, and actionable.
-            - Focus on providing both a summary of the role and a human-like assessment.
-            """)
-
-        chain = prompt | llm
+        # ✅ STRUCTURED OUTPUT (KEY FIX)
+        structured_llm = llm.with_structured_output(SummaryJobInfo)
+        chain = prompt | structured_llm
 
         summarized_jobs = []
 
-        for idx, job in enumerate(jobs):
+        for job in jobs:
             try:
-                response = chain.invoke({
+                parsed: SummaryJobInfo = chain.invoke({
                     "job": json.dumps(job, ensure_ascii=False),
                     "resume": resume
-
                 })
 
-                raw = response.content if hasattr(response, "content") else str(response)
-                parsed = json.loads(raw)
-
-                brief_summary = parsed.get("brief_summary", "")
-                hr_insight = parsed.get("hr_insight", "")
-
-                # ✅ Merge safely (NO DATA LOSS)
                 enriched = {
                     **job,
-                    "brief_summary": brief_summary or job.get("brief_summary", ""),
-                    "fit_score": float(job.get("fit_score", 0.0) or 0.0),
-                    "matching_skills": job.get("matching_skills", []) or [],
-                    "missing_skills": job.get("missing_skills", []) or [],
-                    "reason": job.get("reason", "") or "",
+                    "brief_summary": parsed.brief_summary,
+                    "hr_insight": parsed.hr_insight,
                 }
-                
-
 
                 summarized_jobs.append(enriched)
 
-                logger.debug(f"[Summarize] {idx+1}/{len(jobs)} OK: {job.get('title')}")
-
             except Exception as e:
-                logger.warning(f"[Summarize] Failed for job '{job.get('title', '')}': {str(e)}")
+                logger.warning(f"[SUMMARY FAILED] {job.get('title')} → {e}")
 
-                # ✅ FAIL-SAFE → never drop job
                 summarized_jobs.append({
                     **job,
                     "brief_summary": job.get("brief_summary", ""),
-                    "fit_score": float(job.get("fit_score", 0.0) or 0.0),
-                    "matching_skills": job.get("matching_skills", []) or [],
-                    "missing_skills": job.get("missing_skills", []) or [],
-                    "reason": job.get("reason", f"Summarization failed: {str(e)}"),
+                    "hr_insight": f"Summary failed: {str(e)}",
                 })
-
-        global _last_jobs
-        _last_jobs = summarized_jobs
-
-        logger.info(f"Summarization completed: {len(summarized_jobs)} jobs")
 
         return ok_response(
             tool=tool_name,
@@ -569,8 +531,7 @@ def summarize_jobs_tool(jobs: list[dict], resume: str) -> dict:
         )
 
     except Exception as e:
-        logger.error(f"summarize_jobs_tool failed: {str(e)}", exc_info=True)
-        return error_response(tool=tool_name, error=str(e))
+        return error_response(tool_name, str(e))
         
 # ============================================================================
 # Tool 5: analyze_query_with_llm
