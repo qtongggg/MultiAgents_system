@@ -267,7 +267,6 @@ def search_jobs_tool(keyword: str, location: str = "Malaysia", per_page: int = 5
         clean_keyword = parsed.get("keyword", keyword)
         clean_location = parsed.get("location", location)
 
-        logger.info(f"Searching jobs: keyword='{clean_keyword}', location='{clean_location}'")
 
         # Fetch jobs from API
         jobs = search_jobs(
@@ -277,7 +276,6 @@ def search_jobs_tool(keyword: str, location: str = "Malaysia", per_page: int = 5
             per_page=per_page + 3
         )
         
-        logger.info(f"API search returned {len(jobs)} jobs before cleaning")
 
         # Clean and filter results
         results = clean_job_results(jobs)
@@ -293,7 +291,6 @@ def search_jobs_tool(keyword: str, location: str = "Malaysia", per_page: int = 5
 
         _last_jobs = results
 
-        logger.info(f"Search completed: found {len(results)} jobs")
 
         return ok_response(
             tool=tool_name,
@@ -314,43 +311,24 @@ def search_jobs_tool(keyword: str, location: str = "Malaysia", per_page: int = 5
 # Tool 2: Match Jobs with Resume
 # ============================================================================
 
+from custom.custom_types import MatchResult
+
 @mcp.tool()
 def match_jobs_tool(resume_source_id: str, jobs: list[dict]) -> dict:
-    """
-    Match jobs against a candidate's resume and score fit.
-    
-    Args:
-        resume_source_id: Source ID of the resume to match against
-        jobs: List of job listings to score
-        
-    Returns:
-        Dictionary with matched jobs including fit scores
-    """
     tool_name = "match_jobs_tool"
-    
+
     try:
         if not isinstance(jobs, list):
-            logger.error(f"Invalid input: jobs must be a list, got {type(jobs)}")
-            return error_response(tool=tool_name, error="Invalid input: jobs must be a list")
+            return error_response(tool_name, "jobs must be a list")
 
-        logger.info(f"Matching {len(jobs)} jobs against resume: {resume_source_id}")
-
-        # Fetch resume text
         resume_text = fetch_resume_text(resume_source_id)
-        logger.info(resume_source_id)
         if not resume_text:
-            logger.error(f"No resume found for source_id: {resume_source_id}")
-            return error_response(
-                tool=tool_name,
-                error=f"No resume found for source_id: '{resume_source_id}'",
-                jobs=[],
-            )
+            return error_response(tool_name, f"No resume found for '{resume_source_id}'")
 
-        # Prepare matching prompt
         prompt = ChatPromptTemplate.from_template("""
         You are a resume-job matching assistant.
 
-        Your task is to evaluate how well a candidate's resume matches a job.
+        Evaluate how well the candidate matches the job.
 
         Resume:
         {resume}
@@ -360,67 +338,37 @@ def match_jobs_tool(resume_source_id: str, jobs: list[dict]) -> dict:
         Company: {company}
         Location: {location}
         Description: {job_description}
-
-        Return ONLY one valid JSON object in exactly this format:
-        {{
-        "fit_score": 0.0,
-        "matching_skills": [],
-        "missing_skills": [],
-        "reason": ""
-        }}
-
-        Strict output rules:
-        - Return ONLY the JSON object
-        - Do NOT wrap the JSON in markdown fences
-        - Do NOT output ```json
-        - Do NOT output ```
-        - Do NOT include any explanation, heading, notes, or extra text
-        - Do NOT add text before or after the JSON
-        - fit_score must be a float from 0.0 to 1.0 and fit_score should not be none
-
-        Scoring rules:
-        - Working experience is one of the MOST IMPORTANT factors in scoring
-        - Pay very close attention to explicit experience requirements in the job description
-        - Compare the candidate's resume experience against the required years/level in the job
-        - If the resume does NOT clearly meet the required years of experience, reduce the fit_score significantly
-        - If the role is for fresh graduates / junior / entry-level and the resume matches, increase the fit_score
-        - matching_skills: short skill/tool names found in BOTH resume and job; may include matched experience level phrases
-        - missing_skills: short skill names, tool names, and important missing experience requirements; max 10 items
-        - reason: 2-3 sentences explicitly mentioning whether the candidate meets, partially meets, or does not meet the required experience level
         """)
 
-        chain = prompt | llm
+        # ✅ Structured LLM (KEY CHANGE)
+        structured_llm = llm.with_structured_output(MatchResult)
+        chain = prompt | structured_llm
+
         matched_jobs = []
 
         for job in jobs:
             try:
-                # Score the job
-                response = chain.invoke({
+                parsed: MatchResult = chain.invoke({
                     "resume": resume_text,
                     "title": job.get("title", ""),
                     "company": job.get("company", ""),
                     "location": job.get("location", ""),
-                    "job_description": job.get("job_description")
+                    "job_description": job.get("job_description", "")
                 })
 
-                raw = response.content if hasattr(response, "content") else str(response)
-                scored = json.loads(raw)
-
-
-                # Enrich job with scoring
                 enriched = {
                     **job,
-                    "fit_score": float(scored.get("fit_score", 0.0)),
-                    "matching_skills": scored.get("matching_skills", []) or [],
-                    "missing_skills": scored.get("missing_skills", []) or [],
-                    "reason": scored.get("reason", "") or "",
+                    "fit_score": float(parsed.fit_score),
+                    "matching_skills": parsed.matching_skills,
+                    "missing_skills": parsed.missing_skills,
+                    "reason": parsed.reason,
                 }
+
                 matched_jobs.append(enriched)
-                logger.debug(f"Scored job: {enriched.get('title')} (fit_score={enriched.get('fit_score')})")
 
             except Exception as e:
-                logger.warning(f"Failed to score job '{job.get('title', '')}': {str(e)}")
-                # Add job with zero score on error
+                logger.warning(f"[MATCH FAILED] {job.get('title')} → {str(e)}")
+
                 matched_jobs.append({
                     **job,
                     "fit_score": 0.0,
@@ -432,17 +380,15 @@ def match_jobs_tool(resume_source_id: str, jobs: list[dict]) -> dict:
         global _last_jobs
         _last_jobs = matched_jobs
 
-        logger.info(f"Matching completed: scored {len(matched_jobs)} jobs")
-
         return ok_response(
             tool=tool_name,
             jobs=matched_jobs,
-            meta={"count": len(matched_jobs)},
+            meta={"count": len(matched_jobs)}
         )
 
     except Exception as e:
         logger.error(f"match_jobs_tool failed: {str(e)}", exc_info=True)
-        return error_response(tool=tool_name, error=str(e))
+        return error_response(tool_name, str(e))
 
 
 # ============================================================================
@@ -940,3 +886,17 @@ def summarize_tool(context: str, question: str) -> dict:
 if __name__ == "__main__":
     logger.info("Starting MCP job tools server")
     mcp.run(transport="stdio")
+
+
+
+
+# @app.post("/api/rag/query")
+# async def query_rag(payload: RagQueryRequest):
+#     response = await run_orchestrator(payload.question, payload.top_k)
+
+#     return {
+#         "answer": response.get("answer"),
+#         "sources": response.get("sources", []),
+#         "mode": response.get("mode"),
+#         "jobs": response.get("jobs", []),
+#     }
