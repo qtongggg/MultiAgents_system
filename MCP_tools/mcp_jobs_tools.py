@@ -262,7 +262,7 @@ def search_jobs_tool(keyword: str, location: str = "Malaysia", per_page: int = 5
     tool_name = "search_jobs_tool"
     
     try:
-        random_page = random.randint(1, 5)
+        random_page = random.randint(1, 3)
         parsed = parse_job_query(keyword, location)
         clean_keyword = parsed.get("keyword", keyword)
         clean_location = parsed.get("location", location)
@@ -272,7 +272,7 @@ def search_jobs_tool(keyword: str, location: str = "Malaysia", per_page: int = 5
         jobs = search_jobs(
             clean_keyword,
             clean_location,
-            page=1,
+            page=random_page,
             per_page=per_page + 3
         )
         
