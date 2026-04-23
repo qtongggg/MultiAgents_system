@@ -17,7 +17,6 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-qdrant = QdrantClient(url=os.getenv("QDRANT_URL", "http://localhost:6333"))
 
 openai_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 # MAX_ITERATIONS = 8
@@ -26,36 +25,6 @@ openai_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 # # ---------------------------------------------------------------------------
 # # Resume helper
 # # ---------------------------------------------------------------------------
-
-def get_resume_source_id() -> str | None:
-    env_id = os.getenv("RESUME_SOURCE_ID")
-    if env_id:
-        return env_id
-
-    filters = [
-        Filter(must=[FieldCondition(key="source_type", match=MatchValue(value="resume"))]),
-        None,
-    ]
-
-    for f in filters:
-        try:
-            kwargs = dict(
-                collection_name="pdf_chunks_hybrid",
-                limit=1,
-                with_payload=True,
-                with_vectors=False,
-            )
-            if f:
-                kwargs["scroll_filter"] = f
-
-            results, _ = qdrant.scroll(**kwargs)
-            if results:
-                payload = results[0].payload or {}
-                return payload.get("source_id") or payload.get("source")
-        except Exception:
-            logger.exception("Failed while looking up resume_source_id")
-
-    return None
 
 
 # # ---------------------------------------------------------------------------

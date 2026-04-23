@@ -78,6 +78,35 @@ def error_response(tool: str, error: str, jobs: list | None = None, meta: dict |
         "meta": meta or {},
     }
 
+def get_resume_source_id() -> str | None:
+    env_id = os.getenv("RESUME_SOURCE_ID")
+    if env_id:
+        return env_id
+
+    filters = [
+        Filter(must=[FieldCondition(key="source_type", match=MatchValue(value="resume"))]),
+        None,
+    ]
+
+    for f in filters:
+        try:
+            kwargs = dict(
+                collection_name="pdf_chunks_hybrid",
+                limit=1,
+                with_payload=True,
+                with_vectors=False,
+            )
+            if f:
+                kwargs["scroll_filter"] = f
+
+            results, _ = get_qdrant().scroll(**kwargs)
+            if results:
+                payload = results[0].payload or {}
+                return payload.get("source_id") or payload.get("source")
+        except Exception:
+            logger.exception("Failed while looking up resume_source_id")
+
+    return None
 
 # ============================================================================
 # Qdrant Client Configuration
@@ -314,16 +343,18 @@ def search_jobs_tool(keyword: str, location: str = "Malaysia", per_page: int = 5
 
 
 @mcp.tool()
-def match_jobs_tool(resume_source_id: str, jobs: list[dict]) -> dict:
+def match_jobs_tool(jobs: list[dict]) -> dict:
     tool_name = "match_jobs_tool"
 
     try:
         if not isinstance(jobs, list):
             return error_response(tool_name, "jobs must be a list")
-
+        
+        resume_source_id = get_resume_source_id()
+        
         resume_text = fetch_resume_text(resume_source_id)
         if not resume_text:
-            return error_response(tool_name, f"No resume found for '{resume_source_id}'")
+            return error_response(tool_name, f"No resume found for qdrant'")
 
         prompt = ChatPromptTemplate.from_template("""
         You are a resume-job matching assistant.
@@ -424,34 +455,49 @@ def match_jobs_tool(resume_source_id: str, jobs: list[dict]) -> dict:
 # ============================================================================
 # Tool 3: Ingest Jobs into Vector Database
 # ============================================================================
-
 @mcp.tool()
 def ingest_jobs_tool(jobs: list[dict]) -> dict:
     tool_name = "ingest_jobs_tool"
 
     try:
-        if not isinstance(jobs, list) or not all(isinstance(j, dict) for j in jobs):
-            logger.error(f"Invalid input: jobs must be a list of dicts, got {type(jobs)}")
-            return error_response(tool=tool_name, error="Invalid input: jobs must be a list of dicts")
-
-        if not jobs:
-            logger.info("No jobs to ingest")
-            return ok_response(tool=tool_name, jobs=[], meta={"count": 0, "ingested": False})
-
-        logger.info(f"Ingesting {len(jobs)} jobs into Qdrant")
+        if not isinstance(jobs, list):
+            return error_response(tool=tool_name, error="jobs must be list[dict]")
 
         enriched = []
 
         for job in jobs:
-            job_id = job.get("id") or make_job_id(job)
+            if not isinstance(job, dict):
+                continue
 
-            raw = _raw_jobs_cache.get(job_id, {})
+            job_id = job.get("id") or job.get("job_id") or make_job_id(job)
+
+            # SAFE float conversion
+            try:
+                fit_score = float(job.get("fit_score", 0.0))
+            except Exception:
+                fit_score = 0.0
 
             merged = {
-                **raw,
-                **job,
-                "id": job_id,  # ensure consistency
+                "id": job_id,
+                "title": job.get("title", ""),
+                "company": job.get("company", ""),
+                "location": job.get("location", ""),
+                "job_description": job.get("job_description", ""),
+                "link": job.get("link", ""),
+
+                "fit_score": fit_score,
+
+                "matching_skills": job.get("matching_skills") or [],
+                "missing_skills": job.get("missing_skills") or [],
+                "reason": job.get("reason") or ""
             }
+
+            # ⚠️ ONLY merge raw AFTER cleaning (or remove this entirely)
+            raw = _raw_jobs_cache.get(job_id)
+            if isinstance(raw, dict):
+                # prevent overwrite of clean fields
+                raw.pop("fit_score", None)
+                merged.update(raw)
 
             enriched.append(merged)
 
@@ -460,19 +506,14 @@ def ingest_jobs_tool(jobs: list[dict]) -> dict:
         global _last_jobs
         _last_jobs = enriched
 
-        logger.info(f"Successfully ingested {len(enriched)} jobs")
-
         return ok_response(
             tool=tool_name,
             jobs=enriched,
-            meta={
-                "count": len(enriched),
-                "ingested": True,
-            },
+            meta={"count": len(enriched), "ingested": True}
         )
 
     except Exception as e:
-        logger.error(f"ingest_jobs_tool failed: {str(e)}", exc_info=True)
+        logger.error(f"ingest_jobs_tool failed: {e}", exc_info=True)
         return error_response(tool=tool_name, error=str(e))
 
 

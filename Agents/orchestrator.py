@@ -117,116 +117,206 @@ logger = logging.getLogger(__name__)
 
 
 
+from pydantic import BaseModel, Field
+from typing import Dict, Callable, Awaitable, Any, List, Optional
+import asyncio
+
+
+# =========================================================
+# STANDARD RESPONSE MODEL
+# =========================================================
+
+class AgentResponse(BaseModel):
+    ok: bool = True
+    mode: str = "qa"
+    answer: str = ""
+    jobs: List[dict] = Field(default_factory=list)
+    error: Optional[str] = None
+    meta: dict = Field(default_factory=dict)
+
+
+# =========================================================
+# ORCHESTRATOR AGENT
+# =========================================================
+
 class OrchestratorAgent:
     def __init__(self):
         self.agents: Dict[str, Callable[..., Awaitable[Any]]] = {}
 
-    # -----------------------------
-    # Register
-    # -----------------------------
+    # -----------------------------------------------------
+    # REGISTER AGENT
+    # -----------------------------------------------------
     def register(self, name: str, func: Callable[..., Any]):
         self.agents[name] = func
-        print(f"Registered agent: {name}")
+        print(f"✅ Registered agent: {name}")
 
-    # -----------------------------
-    # Run agent
-    # -----------------------------
+    # -----------------------------------------------------
+    # RUN AGENT SAFELY
+    # -----------------------------------------------------
     async def run(self, name: str, user_input: str = "", **kwargs):
         if name not in self.agents:
             raise ValueError(f"Agent '{name}' not found")
 
-        print(f"Running agent: {name}")
+        print(f"🚀 Running agent: {name}")
 
-        agent = self.agents[name]
-        result = agent(user_input, **kwargs)
+        try:
+            agent = self.agents[name]
+            result = agent(user_input, **kwargs)
 
-        if asyncio.iscoroutine(result):
-            result = await result
+            if asyncio.iscoroutine(result):
+                result = await result
 
-        return result
+            return result
 
-    # =========================================================
-    # 🔥 CLEAN HELPER METHODS (moved out)
-    # =========================================================
+        except Exception as e:
+            print(f"❌ Agent failed: {name} -> {str(e)}")
+
+            return {
+                "ok": False,
+                "answer": "",
+                "jobs": [],
+                "error": str(e),
+                "meta": {"failed_agent": name}
+            }
+
+    # -----------------------------------------------------
+    # INTENT MAPPING
+    # -----------------------------------------------------
+    def get_agent_by_intent(self, intent: str) -> str:
+        return {
+            "job_search": "job_search_agent",
+            "resume": "resume_agent",
+            "qa": "qa_agent",
+            "email": "email_agent",
+        }.get(intent, "qa_agent")
+
+    # -----------------------------------------------------
+    # POST ACTIONS
+    # -----------------------------------------------------
+    async def handle_post_actions(self, intent: str, jobs: list):
+        if intent == "job_search" and jobs:
+            print("📧 Triggering email agent...")
+            await self.run("email_agent", user_input=str(jobs))
+
+    # -----------------------------------------------------
+    # SAFE EXTRACTORS (CRITICAL FIX)
+    # -----------------------------------------------------
     def _extract_answer(self, result: dict) -> str:
         if not isinstance(result, dict):
             return ""
 
-        if "result" in result and isinstance(result["result"], dict):
-            return result["result"].get("answer", "")
+        # Case 1: direct answer
+        if isinstance(result.get("answer"), str):
+            return result["answer"]
 
-        return result.get("answer", "")
+        # Case 2: nested result.answer
+        nested = result.get("result")
+        if isinstance(nested, dict):
+            if isinstance(nested.get("answer"), str):
+                return nested["answer"]
+
+        return ""
 
     def _extract_jobs(self, result: dict) -> list:
         if not isinstance(result, dict):
             return []
 
-        if "result" in result and isinstance(result["result"], dict):
-            return result["result"].get("jobs", [])
+        # Case 1: direct jobs
+        if isinstance(result.get("jobs"), list):
+            return result["jobs"]
 
-        return result.get("jobs", [])
+        # Case 2: nested result.jobs
+        nested = result.get("result")
+        if isinstance(nested, dict):
+            if isinstance(nested.get("jobs"), list):
+                return nested["jobs"]
 
-    # Optional: combined extractor (cleaner usage)
-    def _normalize_output(self, raw_result: dict) -> dict:
-        answer = self._extract_answer(raw_result)
-        jobs = self._extract_jobs(raw_result)
+        return []
 
-        if not answer and jobs:
-            answer = f"Found {len(jobs)} relevant jobs"
-
-        return {
-            "answer": answer,
-            "jobs": jobs
-        }
-
-    # =========================================================
-    # PIPELINE
-    # =========================================================
+    # -----------------------------------------------------
+    # MAIN PIPELINE
+    # -----------------------------------------------------
     async def run_pipeline(self, question: str, top_k: int = 5) -> dict:
-        print("Starting orchestrator pipeline")
 
-        intent = await detect_intent_with_llm(question)
+        print("======================================")
+        print("🔥 START ORCHESTRATOR PIPELINE")
+        print("======================================")
 
-        query_type = intent.get("intent", "qa")
-        location = intent.get("location") or "Malaysia"
-        number = intent.get("number") or top_k
+        try:
+            # -------------------------
+            # Step 1: intent detection
+            # -------------------------
+            intent_data = await detect_intent_with_llm(question)
 
-        print(f"Intent: {query_type}")
+            intent = intent_data.get("intent", "qa")
+            location = intent_data.get("location") or "Malaysia"
+            number = intent_data.get("number") or top_k
 
-        # -----------------------------
-        # Routing
-        # -----------------------------
-        if query_type == "job_search":
+            print(f"Detected intent: {intent}")
+
+            # -------------------------
+            # Step 2: select agent
+            # -------------------------
+            agent_name = self.get_agent_by_intent(intent)
+
+            kwargs = {}
+
+            if intent == "job_search":
+                kwargs = {
+                    "location": location,
+                    "per_page": number,
+                }
+
+            elif intent == "resume":
+                kwargs = {
+                    "top_k": number,
+                }
+
+            # -------------------------
+            # Step 3: run agent
+            # -------------------------
             raw_result = await self.run(
-                "job_search_agent",
-                question,
-                location=location,
-                per_page=number
+                name=agent_name,
+                user_input=question,
+                **kwargs
             )
 
+            # -------------------------
+            # Step 4: normalize output
+            # -------------------------
+            answer = self._extract_answer(raw_result)
             jobs = self._extract_jobs(raw_result)
 
-            if jobs:
-                await self.run("email_agent",str(jobs))
+            if not answer and jobs:
+                answer = f"Found {len(jobs)} relevant jobs"
 
-        elif query_type == "resume":
-            raw_result = await self.run(
-                "resume_agent",
-                question,
-                top_k=number
+            # -------------------------
+            # Step 5: post actions
+            # -------------------------
+            await self.handle_post_actions(intent, jobs)
+
+            # -------------------------
+            # Step 6: final response
+            # -------------------------
+            final_response = AgentResponse(
+                ok=raw_result.get("ok", True),
+                mode=intent,
+                answer=answer,
+                jobs=jobs,
+                error=raw_result.get("error"),
+                meta=raw_result.get("meta", {})
             )
 
-        else:
-            raw_result = await self.run("qa_agent", question)
+            return final_response.model_dump()
 
-        # -----------------------------
-        # Normalize output
-        # -----------------------------
-        normalized = self._normalize_output(raw_result)
+        except Exception as e:
+            print(f"❌ Pipeline failed: {str(e)}")
 
-        return {
-            "ok": True,
-            "mode": query_type,
-            "answer": normalized["answer"],
-            "jobs": normalized["jobs"]
-        }
+            return AgentResponse(
+                ok=False,
+                mode="qa",
+                answer="",
+                jobs=[],
+                error=str(e),
+                meta={"stage": "run_pipeline"}
+            ).model_dump()

@@ -44,19 +44,18 @@ def search_jobs(keyword: str, location: str = "Malaysia", page: int = 1, per_pag
     return jobs
 
 
-def clean_job_results(jobs) -> dict:
+def clean_job_results(jobs):
     cleaned = [
         {
             "job_id": job.get("job_id") or str(uuid.uuid4()),
-            "title": job.get("job_title", ""),
-            "company": job.get("employer_name", ""),
-            "job_description": job.get("job_description", ""),
-            "location": job.get("job_location", ""),
-            "employment_type": job.get("job_employment_type", ""),
-            "link": job.get("job_apply_link", "")
+            "title": job.get("job_title") or "",
+            "company": job.get("employer_name") or "",
+            "job_description": job.get("job_description") or "",
+            "location": job.get("job_location") or "",
+            "employment_type": job.get("job_employment_type") or "",
+            "link": job.get("job_apply_link") or "",
         }
         for job in jobs
     ]
     return cleaned
-
 

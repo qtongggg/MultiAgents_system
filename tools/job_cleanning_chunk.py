@@ -254,7 +254,6 @@ def build_embed_text(job: dict) -> str:
     title           = job.get("title", "")
     company         = job.get("company", "")
     location        = job.get("location", "")
-    employment_type = job.get("employment_type", "")
     matching_skills = job.get("matching_skills", []) or []
     missing_skills  = job.get("missing_skills",  []) or []
     reason          = job.get("reason",          "") or ""
@@ -268,8 +267,7 @@ def build_embed_text(job: dict) -> str:
     parts = [
         f"Role: {title}",
         f"Company: {company}",
-        f"Location: {location}",
-        f"Type: {employment_type}",
+        f"Location: {location}"
     ]
 
 
@@ -294,38 +292,18 @@ def build_embed_text(job: dict) -> str:
 
 
 def ingest_jobs_to_qdrant(jobs: list):
-    """
-    Hybrid ingestion for Qdrant:
-    - dense vector for semantic meaning
-    - sparse vector for keyword precision
-    - payload stores metadata + full job description
-    """
     print(f"Starting ingestion for {len(jobs)} jobs", file=sys.stderr)
 
     ensure_hybrid_collection()
 
     new_jobs = []
-    skipped = 0
 
     for job in jobs:
-        point_id = make_job_id(job)
+        if not isinstance(job, dict):
+            continue
 
-        try:
-            existing = qdrant_client.retrieve(
-                collection_name="job_chunks_hybrid",
-                ids=[point_id],
-                with_payload=False,
-                with_vectors=False,
-            )
-            if existing:
-                print(f"  SKIP (exists): '{job.get('title')}' @ '{job.get('company')}'", file=sys.stderr)
-                skipped += 1
-                continue
-        except Exception:
-            pass
-
-        new_jobs.append((job, point_id))
-
+        job_id = job.get("job_id") or make_job_id(job)
+        new_jobs.append((job, job_id))
 
     if not new_jobs:
         print("No new jobs to ingest.", file=sys.stderr)
@@ -333,35 +311,45 @@ def ingest_jobs_to_qdrant(jobs: list):
 
     embed_texts_list = [build_embed_text(job) for job, _ in new_jobs]
 
-    print(f"  Embedding {len(embed_texts_list)} jobs...", file=sys.stderr)
+    print(f"Embedding {len(embed_texts_list)} jobs...", file=sys.stderr)
 
     dense_vectors = embed_texts(embed_texts_list)
     sparse_vectors = [embed_sparse(text) for text in embed_texts_list]
 
     points = []
 
-    for (job, point_id), dense_vector, sparse in zip(new_jobs, dense_vectors, sparse_vectors):
+    for (job, job_id), dense_vector, sparse in zip(new_jobs, dense_vectors, sparse_vectors):
+
+        if not sparse or len(sparse) != 2:
+            continue
+
         sparse_indices, sparse_values = sparse
+
+        try:
+            fit_score = float(job.get("fit_score") or 0.0)
+        except Exception:
+            fit_score = 0.0
 
         payload = {
             "source_type": "job",
-            "source_id": job.get("job_id") or make_job_id(job),
-            "job_id": job.get("job_id") or make_job_id(job),
+            "source_id": job_id,
+            "job_id": job_id,
+
             "title": job.get("title", ""),
             "company": job.get("company", ""),
             "location": job.get("location", ""),
             "link": job.get("link", ""),
-            "employment_type": job.get("employment_type", ""),
-            "fit_score": job.get("fit_score", 0.0) or 0.0,
-            "matching_skills": job.get("matching_skills", []) or [],
-            "missing_skills": job.get("missing_skills", []) or [],
-            "reason": job.get("reason", "") or "",
-            "job_description": build_embed_text(job),  # useful for reranking / retrieval output
+
+            "fit_score": fit_score,
+            "matching_skills": job.get("matching_skills") or [],
+            "missing_skills": job.get("missing_skills") or [],
+            "reason": job.get("reason") or "",
+            "job_description": job.get("job_description", ""),
         }
 
         points.append(
             models.PointStruct(
-                id=point_id,
+                id=job_id,
                 vector={
                     "dense": dense_vector,
                     "sparse": models.SparseVector(
@@ -373,7 +361,7 @@ def ingest_jobs_to_qdrant(jobs: list):
             )
         )
 
-    print(f"Upserting {len(points)} hybrid job points to Qdrant...", file=sys.stderr)
+    print(f"Upserting {len(points)} job points...", file=sys.stderr)
 
     qdrant_client.upsert(
         collection_name="job_chunks_hybrid",

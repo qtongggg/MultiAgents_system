@@ -199,11 +199,29 @@ async def search_resume_api(request: ResumeSearchRequest):
 
 @app.post("/api/rag/query")
 async def query_rag(payload: RagQueryRequest):
-    response = await orchestrator.run_pipeline(payload.question, payload.top_k)
+    try:
+        response = await orchestrator.run_pipeline(
+            payload.question,
+            payload.top_k
+        )
 
-    return {
-        "answer": response.get("answer"),
-        "sources": response.get("sources", []),
-        "mode": response.get("mode"),
-        "jobs": response.get("jobs", []),
-    }
+        return {
+            "ok": response.get("ok", True),
+            "answer": response.get("answer", ""),
+            "sources": response.get("sources", []),
+            "mode": response.get("mode", "qa"),
+            "jobs": response.get("jobs", []),
+            "error": response.get("error"),
+        }
+
+    except Exception as e:
+        logging.exception("query_rag failed")
+
+        return {
+            "ok": False,
+            "answer": "",
+            "sources": [],
+            "mode": "qa",
+            "jobs": [],
+            "error": str(e),
+        }
