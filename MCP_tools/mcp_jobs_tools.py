@@ -369,6 +369,9 @@ def match_jobs_tool(resume_source_id: str, jobs: list[dict]) -> dict:
 
         # ✅ Structured LLM (KEY CHANGE)
         structured_llm = llm.with_structured_output(MatchResult)
+
+        logger.info(f"structured llm {structured_llm}")
+        
         chain = prompt | structured_llm
 
         matched_jobs = []

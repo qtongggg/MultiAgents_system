@@ -126,7 +126,7 @@ class OrchestratorAgent:
     # -----------------------------
     def register(self, name: str, func: Callable[..., Any]):
         self.agents[name] = func
-        print(f"✅ Registered agent: {name}")
+        print(f"Registered agent: {name}")
 
     # -----------------------------
     # Run agent
@@ -135,7 +135,7 @@ class OrchestratorAgent:
         if name not in self.agents:
             raise ValueError(f"Agent '{name}' not found")
 
-        print(f"🚀 Running agent: {name}")
+        print(f"Running agent: {name}")
 
         agent = self.agents[name]
         result = agent(user_input, **kwargs)
@@ -183,7 +183,7 @@ class OrchestratorAgent:
     # PIPELINE
     # =========================================================
     async def run_pipeline(self, question: str, top_k: int = 5) -> dict:
-        print("🚀 Starting orchestrator pipeline")
+        print("Starting orchestrator pipeline")
 
         intent = await detect_intent_with_llm(question)
 
@@ -191,7 +191,7 @@ class OrchestratorAgent:
         location = intent.get("location") or "Malaysia"
         number = intent.get("number") or top_k
 
-        print(f"🎯 Intent: {query_type}")
+        print(f"Intent: {query_type}")
 
         # -----------------------------
         # Routing
