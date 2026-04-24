@@ -45,7 +45,7 @@ export default function JobSearchForm() {
         per_page: perPage,
       });
 
-      const sortedJobs = [...(data.result.jobs || [])].sort(
+      const sortedJobs = [...(data.jobs || [])].sort(
         (a, b) => (b.fit_score || 0) - (a.fit_score || 0)
       );
 

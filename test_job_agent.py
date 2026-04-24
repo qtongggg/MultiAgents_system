@@ -21,7 +21,8 @@ async def main():
     result = await agent.run({
         "keyword": "data scientist",
         "location": "Malaysia",
-        "per_page": 5
+        "per_page": 1,
+        "page": 1
     })
     print(result)
 

@@ -8,7 +8,8 @@ from Agents.job_search_agent import run_job_search_agent
 from Agents.company_summary_agent import job_details_agent
 from Agents.qa_agent import run_qa_agent
 from Agents.router_agent import rewrite_query_with_llm, detect_intent_with_llm
-from Agents.email_agent import run_email_agent
+from Agents.Agent_Registry import AgentRegistry
+# from Agents.email_agent import run_email_agent
 
 logger = logging.getLogger(__name__)
 
@@ -140,45 +141,28 @@ class AgentResponse(BaseModel):
 # =========================================================
 
 class OrchestratorAgent:
-    def __init__(self):
-        self.agents: Dict[str, Callable[..., Awaitable[Any]]] = {}
-
-    # -----------------------------------------------------
-    # REGISTER AGENT
-    # -----------------------------------------------------
-    def register(self, name: str, func: Callable[..., Any]):
-        self.agents[name] = func
-        print(f"✅ Registered agent: {name}")
+    def __init__(self, registry: AgentRegistry):
+        self.registry = registry
 
     # -----------------------------------------------------
     # RUN AGENT SAFELY
     # -----------------------------------------------------
     async def run(self, name: str, user_input: str = "", **kwargs):
-        if name not in self.agents:
-            raise ValueError(f"Agent '{name}' not found")
-
-        print(f"🚀 Running agent: {name}")
+        
+        agent = self.registry.get_agent(name)
 
         try:
-            agent = self.agents[name]
-            result = agent(user_input, **kwargs)
-
-            if asyncio.iscoroutine(result):
-                result = await result
-
+            result = await agent.run(user_input=user_input, **kwargs)
             return result
-
+        
         except Exception as e:
-            print(f"❌ Agent failed: {name} -> {str(e)}")
-
             return {
                 "ok": False,
                 "answer": "",
                 "jobs": [],
                 "error": str(e),
-                "meta": {"failed_agent": name}
+                "meta": {"agent": name}
             }
-
     # -----------------------------------------------------
     # INTENT MAPPING
     # -----------------------------------------------------
@@ -293,7 +277,7 @@ class OrchestratorAgent:
             # -------------------------
             # Step 5: post actions
             # -------------------------
-            await self.handle_post_actions(intent, jobs)
+            # await self.handle_post_actions(intent, jobs)
 
             # -------------------------
             # Step 6: final response

@@ -1,6 +1,8 @@
 import sys
 from pathlib import Path
 import logging
+from Agents.Base_agent import BaseAgent, AgentInfo
+from custom.custom_types import AgentResult
 from dotenv import load_dotenv
 from email.mime.text import MIMEText
 import base64
@@ -174,33 +176,49 @@ async def generate_email_content(agent, context):
 
     return parsed["subject"], parsed["body_html"]
 
-async def run_email_agent(context, user_email = user_email):
 
-    # 1. Build agent
-    agent = build_email_agent(context)
 
-    # 2. Generate content
-    subject, body_html = await generate_email_content(agent, context)
+class EmailAgent(BaseAgent):
+    def __init__(self, info: AgentInfo):
+        super().__init__(info)
 
-    # 3. Send email (backend controlled)
-    
+    async def run(self, context, user_email):
+        try:
+            agent = build_email_agent(context)
+            
+            subject, body_html = await generate_email_content(
+                agent, 
+                context
+                )  
+            
+            service = build_resource_service(
+                credentials=get_gmail_credentials(
+                    token_file=str(PROJECT_ROOT / "token.json"),
+                    scopes=["https://mail.google.com/"],
+                    client_secrets_file=str(PROJECT_ROOT / "credentials.json"),
+                )
+            )
 
-    service = build_resource_service(
-        credentials = get_gmail_credentials(
-        token_file=str(PROJECT_ROOT / "token.json"),
-        scopes=["https://mail.google.com/"],
-        client_secrets_file=str(PROJECT_ROOT / "credentials.json"),
-    ))
+            send_email(
+                service=service,
+                to=user_email,
+                subject=subject,
+                html_body=body_html
+            )
 
-    send_email(
-        service=service,
-        to=user_email,  # ✅ controlled, no LLM guessing
-        subject=subject,
-        html_body=body_html
-    )
+            return AgentResult(
+                status="success",
+                data={
+                    "email_sent_to": user_email,
+                    "subject": subject
+                }
+            )
 
-    return {
-        "ok": True,
-        "message": "Email sent successfully"
-    }
+        except Exception as e:
+            logger.error(f"EmailAgent failed: {e}", exc_info=True)
 
+            return AgentResult(
+                status="error",
+                data={},
+                error=str(e)
+            )

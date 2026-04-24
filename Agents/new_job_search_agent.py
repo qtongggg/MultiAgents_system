@@ -3,6 +3,7 @@ from MCP_agent.agent_setup import get_mcp_tools
 import asyncio
 import logging
 
+from Agents.email_agent import EmailAgent
 from custom.custom_types import (
     AgentResult,
     JobSearchRequest,
@@ -35,7 +36,7 @@ class JobSearchAgent(BaseAgent):
         except Exception as e:
             logger.error(f"[{task_name}] FAILED: {e}", exc_info=True)
 
-    async def run(self, user_request: JobSearchRequest):
+    async def run(self, user_input: str, location: str, per_page: int, page: int):
 
         try:
             #####################
@@ -47,10 +48,10 @@ class JobSearchAgent(BaseAgent):
             search_result = await self.execute_tool(
                 search_jobs_tool,
                 {
-                    "keyword": user_request.get("keyword", ""),
-                    "location": user_request.get("location", "Malaysia"),
-                    "per_page": user_request.get("per_page", 1),
-                    "page": user_request.get("page", 1)
+                    "keyword": user_input,
+                    "location": location,
+                    "per_page": per_page,
+                    "page": page 
                 }
             )
 
@@ -67,17 +68,22 @@ class JobSearchAgent(BaseAgent):
             #####################
             match_jobs_tool = mcp_tools["match_jobs_tool"]
 
-            matched_jobs = []
-
-            for job in cleaned_jobs:
-                match_result = await self.execute_tool(
+            tasks = [
+                self.execute_tool(
                     match_jobs_tool,
                     {
                         "jobs": [job.model_dump()]
                     }
                 )
+                for job in cleaned_jobs
+            ]
 
-                for j in match_result["jobs"]:
+            results = await asyncio.gather(*tasks)
+
+            matched_jobs = []
+
+            for match_result in results:
+                for j in match_result.get("jobs", []):
                     matched_jobs.append(
                         MatchJobInfo.model_validate(j).model_dump()
                     )
@@ -87,11 +93,30 @@ class JobSearchAgent(BaseAgent):
             #####################
             ingest_jobs_tool = mcp_tools["ingest_jobs_tool"]
 
-            await self.execute_tool(
-                ingest_jobs_tool,
-                {"jobs": matched_jobs}
+            asyncio.create_task(
+                self.run_background_task(
+                    self.execute_tool(
+                        ingest_jobs_tool,
+                        {"jobs": matched_jobs}
+                    ),
+                    logger,
+                    task_name="ingest_jobs"
+                )
             )
 
+            #####################
+            # 4. Email agent 
+            #####################            
+            email_agent = EmailAgent(
+                AgentInfo(
+                    name="EmailAgent",
+                    description="An agent that generates email content based on job search results."
+                )
+            )
+            await email_agent.run(
+                context=matched_jobs,
+                user_email="smartqingtong@gmail.com"
+            )
             
 
             #####################

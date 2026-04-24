@@ -13,6 +13,8 @@ from dotenv import load_dotenv
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from MCP_agent.agent_setup import startup_mcp, shutdown_mcp
+from Agents.Base_agent import AgentInfo
+from custom.custom_types import JobSearchRequest
 from tools.pdf_ingester import ingest_pdf_hybrid
 
 from Agents.orchestrator import OrchestratorAgent
@@ -26,7 +28,9 @@ logging.basicConfig(level=logging.INFO)
 # =========================================================
 # ORCHESTRATOR (GLOBAL SINGLE INSTANCE)
 # =========================================================
-orchestrator = OrchestratorAgent()
+from Agents.Agent_Registry import AgentRegistry
+registry = AgentRegistry()
+orchestrator = OrchestratorAgent(registry=registry)
 
 # =========================================================
 # SCHEDULER
@@ -103,13 +107,8 @@ UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
 
 # =========================================================
-# REQUEST MODELS
+# REQUEST MODELS can be removed afterward 
 # =========================================================
-class JobSearchRequest(BaseModel):
-    keyword: str
-    location: str
-    per_page: int = 5
-
 
 class ResumeSearchRequest(BaseModel):
     question: str
@@ -138,16 +137,15 @@ def normalize_resume_filename(filename: str) -> str:
 # =========================================================
 # REGISTER AGENTS (IMPORTANT STEP)
 # =========================================================
-from Agents.job_search_agent import run_job_search_agent
-from Agents.resume_agent import run_resume_agent
-from Agents.qa_agent import run_qa_agent
-from Agents.email_agent import run_email_agent
 
-orchestrator.register("job_search_agent", run_job_search_agent)
-orchestrator.register("resume_agent", run_resume_agent)
-orchestrator.register("qa_agent", run_qa_agent)  # optional, can be used for general questions without job/resume intent
-orchestrator.register("email_agent", run_email_agent)  # optional, can be used to trigger email generation from any agent
+from Agents.new_job_search_agent import JobSearchAgent as JobSearchAgentClass
 
+job_search_agent  = JobSearchAgentClass(AgentInfo(
+    name="job_search_agent",
+    description="An agent that searches for jobs based on a keyword and location. It uses the search_jobs_tool to fetch job data, and then formats that data into a structured email content. The email content includes job title, company, location, fit score, summary, matching vs missing skills, and job link. If no jobs are found, it returns a polite message indicating that."
+))
+
+registry.register('job_search_agent', job_search_agent)
 
 # =========================================================
 # API ROUTES (NOW CLEAN)
@@ -180,48 +178,49 @@ async def search_jobs_api(request: JobSearchRequest):
         "job_search_agent",
         request.keyword,
         location=request.location,
-        per_page=request.per_page
+        per_page=request.per_page,
+        page=1
     )
 
     return result
 
 
-@app.post("/api/jobs/resume")
-async def search_resume_api(request: ResumeSearchRequest):
+# @app.post("/api/jobs/resume")
+# async def search_resume_api(request: ResumeSearchRequest):
 
-    result = await orchestrator.run(
-        "resume_agent",
-        request.question,
-        top_k=request.top_k
-    )
+#     result = await orchestrator.run(
+#         "resume_agent",
+#         request.question,
+#         top_k=request.top_k
+#     )
 
-    return result
+#     return result
 
-@app.post("/api/rag/query")
-async def query_rag(payload: RagQueryRequest):
-    try:
-        response = await orchestrator.run_pipeline(
-            payload.question,
-            payload.top_k
-        )
+# @app.post("/api/rag/query")
+# async def query_rag(payload: RagQueryRequest):
+#     try:
+#         response = await orchestrator.run_pipeline(
+#             payload.question,
+#             payload.top_k
+#         )
 
-        return {
-            "ok": response.get("ok", True),
-            "answer": response.get("answer", ""),
-            "sources": response.get("sources", []),
-            "mode": response.get("mode", "qa"),
-            "jobs": response.get("jobs", []),
-            "error": response.get("error"),
-        }
+#         return {
+#             "ok": response.get("ok", True),
+#             "answer": response.get("answer", ""),
+#             "sources": response.get("sources", []),
+#             "mode": response.get("mode", "qa"),
+#             "jobs": response.get("jobs", []),
+#             "error": response.get("error"),
+#         }
 
-    except Exception as e:
-        logging.exception("query_rag failed")
+#     except Exception as e:
+#         logging.exception("query_rag failed")
 
-        return {
-            "ok": False,
-            "answer": "",
-            "sources": [],
-            "mode": "qa",
-            "jobs": [],
-            "error": str(e),
-        }
+#         return {
+#             "ok": False,
+#             "answer": "",
+#             "sources": [],
+#             "mode": "qa",
+#             "jobs": [],
+#             "error": str(e),
+#         }

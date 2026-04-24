@@ -52,7 +52,7 @@ class JobSearchRequest(BaseModel):
     keyword: str
     location: str = "Malaysia"
     per_page: int = 5
-    page: int = 5
+    page: int = 1
 
 
 class AgentResult(BaseModel):
