@@ -2,11 +2,6 @@ import logging
 from symtable import Class
 import asyncio
 from typing import Any, Callable, Dict, Awaitable
-from MCP_agent.agent_setup import get_mcp_tools
-from Agents.resume_agent import run_resume_agent
-from Agents.job_search_agent import run_job_search_agent
-from Agents.company_summary_agent import job_details_agent
-from Agents.qa_agent import run_qa_agent
 from Agents.router_agent import rewrite_query_with_llm, detect_intent_with_llm
 from Agents.Agent_Registry import AgentRegistry
 # from Agents.email_agent import run_email_agent
@@ -117,23 +112,16 @@ logger = logging.getLogger(__name__)
 
 
 
-
-from pydantic import BaseModel, Field
-from typing import Dict, Callable, Awaitable, Any, List, Optional
 import asyncio
+import logging
+from typing import Optional, List
+from pydantic import BaseModel, Field
 
+from Agents.Agent_Registry import AgentRegistry
+from Agents.router_agent import detect_intent_with_llm
+from custom.custom_types import AgentResult
+logger = logging.getLogger(__name__)
 
-# =========================================================
-# STANDARD RESPONSE MODEL
-# =========================================================
-
-class AgentResponse(BaseModel):
-    ok: bool = True
-    mode: str = "qa"
-    answer: str = ""
-    jobs: List[dict] = Field(default_factory=list)
-    error: Optional[str] = None
-    meta: dict = Field(default_factory=dict)
 
 
 # =========================================================
@@ -145,45 +133,58 @@ class OrchestratorAgent:
         self.registry = registry
 
     # -----------------------------------------------------
-    # RUN AGENT SAFELY
+    # SAFE AGENT EXECUTION
     # -----------------------------------------------------
-    async def run(self, name: str, user_input: str = "", **kwargs):
-        
-        agent = self.registry.get_agent(name)
-
+    async def run(self, name: str, **kwargs):
         try:
-            result = await agent.run(user_input=user_input, **kwargs)
+            agent = self.registry.get_agent(name)
+            result = await agent.run(**kwargs)
+
+            if isinstance(result, AgentResult):
+                return result.model_dump()
+
             return result
-        
+
         except Exception as e:
-            return {
-                "ok": False,
-                "answer": "",
-                "jobs": [],
-                "error": str(e),
-                "meta": {"agent": name}
-            }
+            logger.exception(f"[Orchestrator] Agent failed: {name}")
+
+            return AgentResult(
+                status="error",
+                data={},
+                error=str(e),
+                meta={"agent": name}
+            ).model_dump()
+
     # -----------------------------------------------------
-    # INTENT MAPPING
+    # INTENT → AGENT MAPPING
     # -----------------------------------------------------
     def get_agent_by_intent(self, intent: str) -> str:
-        return {
+        mapping = {
             "job_search": "job_search_agent",
             "resume": "resume_agent",
             "qa": "qa_agent",
             "email": "email_agent",
-        }.get(intent, "qa_agent")
+        }
+
+        return mapping.get(intent, "qa_agent")
 
     # -----------------------------------------------------
-    # POST ACTIONS
+    # POST ACTIONS (EMAIL AFTER JOB SEARCH)
     # -----------------------------------------------------
     async def handle_post_actions(self, intent: str, jobs: list):
         if intent == "job_search" and jobs:
-            print("📧 Triggering email agent...")
-            await self.run("email_agent", user_input=str(jobs))
+            logger.info("📧 Triggering EmailAgent in background...")
+
+            asyncio.create_task(
+                self.run(
+                    name="email_agent",
+                    context=jobs,
+                    user_email="smartqingtong@gmail.com"
+                )
+            )
 
     # -----------------------------------------------------
-    # SAFE EXTRACTORS (CRITICAL FIX)
+    # SAFE EXTRACT ANSWER
     # -----------------------------------------------------
     def _extract_answer(self, result: dict) -> str:
         if not isinstance(result, dict):
@@ -193,7 +194,13 @@ class OrchestratorAgent:
         if isinstance(result.get("answer"), str):
             return result["answer"]
 
-        # Case 2: nested result.answer
+        # Case 2: AgentResult style -> data.answer
+        data = result.get("data")
+        if isinstance(data, dict):
+            if isinstance(data.get("answer"), str):
+                return data["answer"]
+
+        # Case 3: legacy result.answer
         nested = result.get("result")
         if isinstance(nested, dict):
             if isinstance(nested.get("answer"), str):
@@ -201,6 +208,9 @@ class OrchestratorAgent:
 
         return ""
 
+    # -----------------------------------------------------
+    # SAFE EXTRACT JOBS
+    # -----------------------------------------------------
     def _extract_jobs(self, result: dict) -> list:
         if not isinstance(result, dict):
             return []
@@ -209,7 +219,13 @@ class OrchestratorAgent:
         if isinstance(result.get("jobs"), list):
             return result["jobs"]
 
-        # Case 2: nested result.jobs
+        # Case 2: AgentResult style -> data.jobs
+        data = result.get("data")
+        if isinstance(data, dict):
+            if isinstance(data.get("jobs"), list):
+                return data["jobs"]
+
+        # Case 3: legacy result.jobs
         nested = result.get("result")
         if isinstance(nested, dict):
             if isinstance(nested.get("jobs"), list):
@@ -220,87 +236,98 @@ class OrchestratorAgent:
     # -----------------------------------------------------
     # MAIN PIPELINE
     # -----------------------------------------------------
-    async def run_pipeline(self, question: str, top_k: int = 5) -> dict:
-
-        print("======================================")
-        print("🔥 START ORCHESTRATOR PIPELINE")
-        print("======================================")
+    async def run_pipeline(self, question: str, location: str = "Malaysia", top_k: int = 5):
+        logger.info("====================================")
+        logger.info("🔥 START ORCHESTRATOR PIPELINE")
+        logger.info("====================================")
 
         try:
-            # -------------------------
-            # Step 1: intent detection
-            # -------------------------
+            # ---------------------------------
+            # STEP 1: Detect intent using LLM
+            # ---------------------------------
             intent_data = await detect_intent_with_llm(question)
 
             intent = intent_data.get("intent", "qa")
             location = intent_data.get("location") or "Malaysia"
             number = intent_data.get("number") or top_k
+            candidate_name = intent_data.get("candidate_name")
 
-            print(f"Detected intent: {intent}")
+            if candidate_name:
+                candidate_name = candidate_name.strip().lower().replace(" ", "_")
 
-            # -------------------------
-            # Step 2: select agent
-            # -------------------------
+            logger.info(f"Detected intent: {intent}")
+            logger.info(f"Candidate name: {candidate_name}")
+            # ---------------------------------
+            # STEP 2: Select agent
+            # ---------------------------------
             agent_name = self.get_agent_by_intent(intent)
 
             kwargs = {}
 
             if intent == "job_search":
                 kwargs = {
+                    "user_input": question,
                     "location": location,
                     "per_page": number,
+                    "page": 1,
                 }
 
             elif intent == "resume":
                 kwargs = {
-                    "top_k": number,
+                    "user_input": question,
+                    "top_k": number
                 }
 
-            # -------------------------
-            # Step 3: run agent
-            # -------------------------
+            else:
+                kwargs = {
+                    "user_input": question
+                }
+
+            # ---------------------------------
+            # STEP 3: Run selected agent
+            # ---------------------------------
             raw_result = await self.run(
                 name=agent_name,
-                user_input=question,
                 **kwargs
             )
 
-            # -------------------------
-            # Step 4: normalize output
-            # -------------------------
+            logger.info(raw_result)
+
+            # ---------------------------------
+            # STEP 4: Normalize output
+            # ---------------------------------
             answer = self._extract_answer(raw_result)
             jobs = self._extract_jobs(raw_result)
 
             if not answer and jobs:
                 answer = f"Found {len(jobs)} relevant jobs"
 
-            # -------------------------
-            # Step 5: post actions
-            # -------------------------
-            # await self.handle_post_actions(intent, jobs)
+            # ---------------------------------
+            # STEP 5: Trigger post actions
+            # ---------------------------------
+            await self.handle_post_actions(intent, jobs)
 
-            # -------------------------
-            # Step 6: final response
-            # -------------------------
-            final_response = AgentResponse(
-                ok=raw_result.get("ok", True),
-                mode=intent,
-                answer=answer,
-                jobs=jobs,
-                error=raw_result.get("error"),
+            # ---------------------------------
+            # STEP 6: Final standardized response
+            # ---------------------------------
+            final_response = AgentResult(
+                status = "success",
+                data = {
+                    "mode": intent,
+                    "answer": answer,
+                    "jobs": jobs
+                },
                 meta=raw_result.get("meta", {})
             )
-
+            logger.info(final_response)
             return final_response.model_dump()
 
         except Exception as e:
-            print(f"❌ Pipeline failed: {str(e)}")
+            logger.exception("[Orchestrator] Pipeline failed")
 
-            return AgentResponse(
-                ok=False,
-                mode="qa",
-                answer="",
-                jobs=[],
+            return AgentResult(
+                status = "error",
+                data = {},
                 error=str(e),
                 meta={"stage": "run_pipeline"}
             ).model_dump()

@@ -16,7 +16,9 @@ from qdrant_storage.vector_db import QdrantStorage
 # Sparse embedding model for hybrid search
 
 from fastembed import SparseTextEmbedding
-
+from functools import lru_cache
+from sentence_transformers import CrossEncoder
+from fastembed import SparseTextEmbedding
 load_dotenv()
 
 
@@ -41,12 +43,23 @@ RESUME_COLLECTION_HYBRID = "pdf_chunks_hybrid"
 RESUME_COLLECTION = "pdf_chunks"
 
 # Cross-encoder reranker
-# reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2") # version 1 that we make use of 
-reranker = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-12-v2', local_files_only=True)
-# Sparse encoder for hybrid search
-# You can change model later if needed
-sparse_model = SparseTextEmbedding(model_name="Qdrant/bm25")
+ 
+# reranker = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-12-v2', local_files_only=True)
+# sparse_model = SparseTextEmbedding(model_name="Qdrant/bm25")
 
+# # models.py
+
+
+@lru_cache(maxsize=1)
+def get_reranker():
+    return CrossEncoder(
+        "cross-encoder/ms-marco-MiniLM-L-12-v2",
+        cache_folder="./models"
+    )
+
+@lru_cache(maxsize=1)
+def get_sparse_model():
+    return SparseTextEmbedding(model_name="Qdrant/bm25")
 
 # -------------------------------------------------------------------
 # Chunking
@@ -104,7 +117,7 @@ def embed_sparse(text: str) -> tuple[list[int], list[float]]:
     """
     Returns sparse vector as (indices, values).
     """
-    sparse_result = next(sparse_model.embed([text]))
+    sparse_result = next(get_sparse_model().embed([text]))
 
     # FastEmbed sparse output usually exposes indices and values
     indices = list(sparse_result.indices)
@@ -268,7 +281,7 @@ def rerank_results(question: str, search_results: dict, top_k: int = 3) -> list[
     texts = [p.get("text", "") for p in payloads]
 
     pairs = [[question, text] for text in texts]
-    scores = reranker.predict(pairs)
+    scores = get_reranker().predict(pairs)
 
     reranked = sorted(      
         zip(scores, payloads),

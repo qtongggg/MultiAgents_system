@@ -72,3 +72,7 @@ class MatchJobInfo(BaseModel):
     missing_skills: List[str]
     reason: str
     fit_score: float = Field(ge=0, le=1)
+
+class ResumeResult(BaseModel):
+    text: str
+    source_id: str | None = None

@@ -70,6 +70,7 @@ export default function RagPage() {
   // -------------------------
   // SEND MESSAGE
   // -------------------------
+
   async function handleSend(question: string) {
     const userMessage: TextMessage = {
       role: "user",
@@ -82,24 +83,26 @@ export default function RagPage() {
     setError("");
 
     try {
-      const data = await askRagQuestion(question, 5); // we need to modify this top k based on the question type
+      const response = await askRagQuestion(question, 5);
 
-      if (data.jobs?.length) {
+      const jobs = response?.data?.jobs ?? [];
+      const answer = response?.data?.answer ?? "";
+
+      if (jobs.length > 0) {
         const assistantMessage: JobsMessage = {
           role: "assistant",
           type: "jobs",
-          jobs: data.jobs,
+          jobs: jobs,
         };
+
         setMessages((prev) => [...prev, assistantMessage]);
       } else {
         const assistantMessage: TextMessage = {
           role: "assistant",
           type: "text",
-          content:
-            typeof data.answer === "string"
-              ? data.answer
-              : "No answer returned.",
+          content: answer || "No answer returned.",
         };
+
         setMessages((prev) => [...prev, assistantMessage]);
       }
     } catch (err) {
@@ -107,14 +110,19 @@ export default function RagPage() {
         role: "assistant",
         type: "text",
         content:
-          err instanceof Error ? err.message : "Something went wrong.",
+          err instanceof Error
+            ? err.message
+            : "Something went wrong.",
       };
+
       setMessages((prev) => [...prev, errorMessage]);
       setError("Failed to get response.");
     } finally {
       setLoading(false);
     }
   }
+
+
 
   // -------------------------
   // FILE HANDLING

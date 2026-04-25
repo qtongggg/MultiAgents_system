@@ -773,10 +773,15 @@ def analyze_query_with_llm(question: str) -> dict:
 # ============================================================================
 # Tool 7: Intent detection
 # ============================================================================
-
 @mcp.tool()
-def search_resume(question: str, top_k: int, candidate_name: str | None = None) -> dict:
+def search_resume(
+    question: str,
+    top_k: int = 5,
+    candidate_name: str | None = None
+) -> dict:
+
     state = make_agent_state()
+
     state["tool"] = "search_resume"
     state["intent"] = "resume"
     state["rewritten_query"] = question
@@ -784,20 +789,40 @@ def search_resume(question: str, top_k: int, candidate_name: str | None = None) 
     state["mode"] = "resume"
 
     try:
+        # -----------------------------
+        # EMBEDDINGS
+        # -----------------------------
         dense_query = embed_dense(question)
         sparse_indices, sparse_values = embed_sparse(question)
 
+        # -----------------------------
+        # BUILD FILTER
+        # -----------------------------
+        query_filter = None
         target_source_id = None
-        if candidate_name:
-            target_source_id = candidate_name + "_resume.pdf"
 
+        if candidate_name:
+            normalized = candidate_name.strip().lower().replace(" ", "_")
+            target_source_id = f"{normalized}_resume.pdf"
+
+            logger.info(f"[search_resume] filter source_id = {target_source_id}")
+
+            query_filter = models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="source_id",
+                        match=models.MatchValue(value=target_source_id)
+                    )
+                ]
+            )
+
+        # -----------------------------
+        # QUERY QDRANT
+        # -----------------------------
         response = get_qdrant().query_points(
             collection_name=RESUME_COLLECTION_HYBRID,
             prefetch=[
-                models.Prefetch(
-                    query=dense_query,
-                    using="dense"
-                ),
+                models.Prefetch(query=dense_query, using="dense"),
                 models.Prefetch(
                     query=models.SparseVector(
                         indices=sparse_indices,
@@ -807,55 +832,139 @@ def search_resume(question: str, top_k: int, candidate_name: str | None = None) 
                 ),
             ],
             query=models.FusionQuery(fusion=models.Fusion.RRF),
+            limit=top_k,
             with_payload=True,
             with_vectors=False,
-            query_filter=models.Filter(
-                must=[
-                    models.FieldCondition(
-                        key="source_id",
-                        match=models.MatchValue(value=target_source_id)
-                    )
-                ]
-            ) if candidate_name else None,
+            query_filter=query_filter,
         )
 
-        payloads: list[dict[str, Any]] = []
-        scores: list[float] = []
+        # -----------------------------
+        # DEBUG (IMPORTANT)
+        # -----------------------------
+        logger.info(f"[search_resume] points returned = {len(response.points)}")
+
+        chunks = []
+        scores = []
 
         for point in response.points:
-            payload = dict(point.payload or {})
-            payloads.append(payload)
-            scores.append(float(point.score) if point.score is not None else 0.0)
+            payload = point.payload or {}
 
+            logger.debug(f"PAYLOAD: {payload}")
+
+            # support BOTH flat and nested formats
+            text = payload.get("text") or payload.get("payload", {}).get("text", "")
+            source_id = payload.get("source_id") or payload.get("payload", {}).get("source_id", "")
+
+            chunks.append({
+                "text": text,
+                "source_id": source_id,
+            })
+
+            scores.append(float(point.score or 0.0))
+
+        # -----------------------------
+        # FALLBACK 1: filter returned nothing
+        # -----------------------------
+        if not chunks and query_filter is not None:
+            logger.warning("[search_resume] filter returned 0 results → retrying without filter")
+
+            response = get_qdrant().query_points(
+                collection_name=RESUME_COLLECTION_HYBRID,
+                prefetch=[
+                    models.Prefetch(query=dense_query, using="dense"),
+                    models.Prefetch(
+                        query=models.SparseVector(
+                            indices=sparse_indices,
+                            values=sparse_values,
+                        ),
+                        using="sparse"
+                    ),
+                ],
+                query=models.FusionQuery(fusion=models.Fusion.RRF),
+                limit=top_k,
+                with_payload=True,
+                with_vectors=False,
+            )
+
+            chunks = []
+            scores = []
+
+            for point in response.points:
+                payload = point.payload or {}
+
+                text = payload.get("text") or payload.get("payload", {}).get("text", "")
+                source_id = payload.get("source_id") or payload.get("payload", {}).get("source_id", "")
+
+                chunks.append({
+                    "text": text,
+                    "source_id": source_id,
+                })
+
+                scores.append(float(point.score or 0.0))
+
+        # -----------------------------
+        # EMPTY RESULT HANDLING
+        # -----------------------------
+        if not chunks:
+            return {
+                "ok": True,
+                "data": {
+                    "chunks": [],
+                    "count": 0
+                },
+                "error": None,
+                "meta": {
+                    "message": "no resume chunks found"
+                }
+            }
+
+        # -----------------------------
+        # RERANK
+        # -----------------------------
         search_results = {
-            "payloads": payloads,
+            "payloads": chunks,
             "scores": scores,
         }
 
+        reranked = rerank_results(question, search_results, top_k)
 
+        if not reranked:
+            reranked = chunks[:top_k]
 
-        reranked_results = rerank_results(question, search_results, top_k)
-
-        logger.info(f"Search resume results: retrieved {len(payloads)} chunks, reranked to top {len(reranked_results)}")
-        for r in reranked_results:
-            logger.info(f"Reranked results: {r['payload'].get('text', '')}")
-            
-
+        # -----------------------------
+        # FINAL RESPONSE
+        # -----------------------------
         state.update({
             "ok": True,
-            "result": reranked_results,
+            "result": reranked,
             "error": None,
         })
-        return state
+
+        return {
+            "ok": True,
+            "data": {
+                "chunks": reranked,
+                "count": len(reranked)
+            },
+            "error": None,
+            "meta": {
+                "tool": "search_resume",
+                "filtered": candidate_name is not None
+            }
+        }
 
     except Exception as e:
-        state.update({
+        logger.exception("[search_resume] failed")
+
+        return {
             "ok": False,
-            "result": None,
+            "data": {
+                "chunks": [],
+                "count": 0
+            },
             "error": str(e),
-        })
-        return state
-    return result
+            "meta": {}
+        }
 
 
 # ============================================================================
