@@ -236,98 +236,217 @@ class OrchestratorAgent:
     # -----------------------------------------------------
     # MAIN PIPELINE
     # -----------------------------------------------------
-    async def run_pipeline(self, question: str, location: str = "Malaysia", top_k: int = 5):
-        logger.info("====================================")
-        logger.info("🔥 START ORCHESTRATOR PIPELINE")
-        logger.info("====================================")
+    # async def run_pipeline(self, question: str, location: str = "Malaysia", top_k: int = 5):
+    #     logger.info("====================================")
+    #     logger.info("🔥 START ORCHESTRATOR PIPELINE")
+    #     logger.info("====================================")
+
+    #     try:
+    #         # ---------------------------------
+    #         # STEP 1: Detect intent using LLM
+    #         # ---------------------------------
+    #         intent_data = await detect_intent_with_llm(question)
+
+    #         intent = intent_data.get("intent", "qa")
+    #         location = intent_data.get("location") or "Malaysia"
+    #         number = intent_data.get("number") or top_k
+    #         candidate_name = intent_data.get("candidate_name")
+
+    #         if candidate_name:
+    #             candidate_name = candidate_name.strip().lower().replace(" ", "_")
+
+    #         logger.info(f"Detected intent: {intent}")
+    #         logger.info(f"Candidate name: {candidate_name}")
+    #         # ---------------------------------
+    #         # STEP 2: Select agent
+    #         # ---------------------------------
+    #         agent_name = self.get_agent_by_intent(intent)
+
+    #         kwargs = {}
+
+    #         if intent == "job_search":
+    #             kwargs = {
+    #                 "user_input": question,
+    #                 "location": location,
+    #                 "per_page": number,
+    #                 "page": 1,
+    #             }
+
+    #         elif intent == "resume":
+    #             kwargs = {
+    #                 "user_input": question,
+    #                 "top_k": number
+    #             }
+
+    #         else:
+    #             kwargs = {
+    #                 "user_input": question
+    #             }
+
+    #         # ---------------------------------
+    #         # STEP 3: Run selected agent
+    #         # ---------------------------------
+    #         raw_result = await self.run(
+    #             name=agent_name,
+    #             **kwargs
+    #         )
+
+    #         logger.info(raw_result)
+
+    #         # ---------------------------------
+    #         # STEP 4: Normalize output
+    #         # ---------------------------------
+    #         answer = self._extract_answer(raw_result)
+    #         jobs = self._extract_jobs(raw_result)
+
+    #         if not answer and jobs:
+    #             answer = f"Found {len(jobs)} relevant jobs"
+
+    #         # ---------------------------------
+    #         # STEP 5: Trigger post actions
+    #         # ---------------------------------
+    #         await self.handle_post_actions(intent, jobs)
+
+    #         # ---------------------------------
+    #         # STEP 6: Final standardized response
+    #         # ---------------------------------
+    #         final_response = AgentResult(
+    #             status = "success",
+    #             data = {
+    #                 "mode": intent,
+    #                 "answer": answer,
+    #                 "jobs": jobs
+    #             },
+    #             meta=raw_result.get("meta", {})
+    #         )
+    #         logger.info(final_response)
+    #         return final_response.model_dump()
+
+    #     except Exception as e:
+    #         logger.exception("[Orchestrator] Pipeline failed")
+
+    #         return AgentResult(
+    #             status = "error",
+    #             data = {},
+    #             error=str(e),
+    #             meta={"stage": "run_pipeline"}
+    #         ).model_dump()
+        
+    async def run_pipeline(self, question: str):
+
+        logger.info("🔥 START PLANNER PIPELINE")
 
         try:
             # ---------------------------------
-            # STEP 1: Detect intent using LLM
+            # 1. PLAN
             # ---------------------------------
-            intent_data = await detect_intent_with_llm(question)
-
-            intent = intent_data.get("intent", "qa")
-            location = intent_data.get("location") or "Malaysia"
-            number = intent_data.get("number") or top_k
-            candidate_name = intent_data.get("candidate_name")
-
-            if candidate_name:
-                candidate_name = candidate_name.strip().lower().replace(" ", "_")
-
-            logger.info(f"Detected intent: {intent}")
-            logger.info(f"Candidate name: {candidate_name}")
-            # ---------------------------------
-            # STEP 2: Select agent
-            # ---------------------------------
-            agent_name = self.get_agent_by_intent(intent)
-
-            kwargs = {}
-
-            if intent == "job_search":
-                kwargs = {
-                    "user_input": question,
-                    "location": location,
-                    "per_page": number,
-                    "page": 1,
-                }
-
-            elif intent == "resume":
-                kwargs = {
-                    "user_input": question,
-                    "top_k": number
-                }
-
-            else:
-                kwargs = {
-                    "user_input": question
-                }
-
-            # ---------------------------------
-            # STEP 3: Run selected agent
-            # ---------------------------------
-            raw_result = await self.run(
-                name=agent_name,
-                **kwargs
+            plan = await self.run(
+                "planner_agent",
+                user_input=question
             )
 
-            logger.info(raw_result)
+            steps = plan.get("result", {}).get("steps", [])
+
+            if not steps:
+                return AgentResult(
+                    status="error",
+                    data={},
+                    error="No execution steps generated",
+                    meta={"stage": "planner"}
+                ).model_dump()
 
             # ---------------------------------
-            # STEP 4: Normalize output
+            # 2. MEMORY
             # ---------------------------------
-            answer = self._extract_answer(raw_result)
-            jobs = self._extract_jobs(raw_result)
+            job_results = []
+            final_result = None
+            final_mode = None
+
+            # ---------------------------------
+            # 3. EXECUTE STEPS
+            # ---------------------------------
+            for step in steps:
+
+                agent_name = step.get("agent")
+                params = dict(step.get("params", {}))
+
+                if not agent_name:
+                    continue
+
+                # ---------------------------------
+                # EMAIL AGENT → BACKGROUND ONLY
+                # ---------------------------------
+                if agent_name == "email_agent":
+
+                    params["context"] = job_results
+
+                    logger.info(f"📧 Running EmailAgent in background: {params}")
+
+                    asyncio.create_task(
+                        self.run(
+                            name="email_agent",
+                            **params
+                        )
+                    )
+
+                    # IMPORTANT:
+                    # skip overwrite final_result
+                    continue
+
+                # ---------------------------------
+                # NORMAL AGENT EXECUTION
+                # ---------------------------------
+                logger.info(f"Running agent: {agent_name}")
+                logger.info(f"Params: {params}")
+
+                result = await self.run(
+                    name=agent_name,
+                    **params
+                )
+
+                logger.info(f"Result from {agent_name}: {result}")
+
+                final_mode = agent_name
+                final_result = result
+
+                # capture jobs
+                if agent_name == "job_search_agent":
+                    job_results = result.get("data", {}).get("jobs", [])
+
+            # ---------------------------------
+            # 4. NORMALIZE RESPONSE
+            # ---------------------------------
+            answer = self._extract_answer(final_result)
+            jobs = self._extract_jobs(final_result)
 
             if not answer and jobs:
                 answer = f"Found {len(jobs)} relevant jobs"
 
-            # ---------------------------------
-            # STEP 5: Trigger post actions
-            # ---------------------------------
-            await self.handle_post_actions(intent, jobs)
+            if not answer and final_result:
+                answer = str(final_result.get("data", {}))
 
             # ---------------------------------
-            # STEP 6: Final standardized response
+            # 5. FINAL RESPONSE
             # ---------------------------------
-            final_response = AgentResult(
-                status = "success",
-                data = {
-                    "mode": intent,
+            return AgentResult(
+                status="success",
+                data={
+                    "mode": final_mode,
                     "answer": answer,
                     "jobs": jobs
                 },
-                meta=raw_result.get("meta", {})
-            )
-            logger.info(final_response)
-            return final_response.model_dump()
+                meta={
+                    "total_steps": len(steps),
+                    "pipeline": "planner_orchestrator"
+                }
+            ).model_dump()
 
         except Exception as e:
-            logger.exception("[Orchestrator] Pipeline failed")
+            logger.exception("Pipeline failed")
 
             return AgentResult(
-                status = "error",
-                data = {},
+                status="error",
+                data={},
                 error=str(e),
                 meta={"stage": "run_pipeline"}
             ).model_dump()

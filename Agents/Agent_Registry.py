@@ -25,3 +25,12 @@ class AgentRegistry:
             raise ValueError(f"No agent found with name '{name}'.")
         
         return agent
+
+    def list_agents(self):
+        return [
+            {
+                "name": name,
+                "description": agent.info.description
+            }
+            for name, agent in self._agents.items()
+        ]

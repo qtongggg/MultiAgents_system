@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr, Field
-from typing import Any, List, Optional
+from typing import Any, Dict, Optional, List
 
 # class RAGChunkAndSrc(BaseModel):
 #     chunk: list[str]
@@ -76,3 +76,15 @@ class MatchJobInfo(BaseModel):
 class ResumeResult(BaseModel):
     text: str
     source_id: str | None = None
+
+class PlanStep(BaseModel):
+    agent: str
+    action: str
+    params: dict
+
+class MCPToolResult(BaseModel):
+    success: bool = True
+    tool_name: str
+    result: Dict[str, Any] = {}
+    message: Optional[str] = None
+    error: Optional[str] = None

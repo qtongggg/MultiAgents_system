@@ -15,7 +15,7 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import Filter, FieldCondition, MatchValue
 from langchain_core.prompts import ChatPromptTemplate
 from LLM.llm import llm
-from custom.custom_types import MatchResult
+from custom.custom_types import MatchResult, MCPToolResult
 import logging
 from pathlib import Path
 import logging
@@ -1049,11 +1049,168 @@ def summarize_tool(context: str, question: str) -> dict:
         return state
 
 # ============================================================================
-# Tool 9: User query intent tool
+# Tool 9: planner tool (LLM)
 # ============================================================================
+import json
+import logging
+from pydantic import BaseModel
+from typing import List, Dict, Any, Optional
+
+logger = logging.getLogger(__name__)
 
 
-    # show me about the 
+@mcp.tool()
+def planner_tool(user_input, available_agents ):
+    tool_name = "planner_tool"
+
+    prompt = ChatPromptTemplate.from_template(
+    """
+    You are a STRICT AI PLANNER.
+
+    Convert the user request into a JSON execution plan.
+
+    You MUST output ONLY valid JSON.
+    No explanation.
+    No markdown.
+    No extra text.
+
+    -------------------------------------------------
+    AVAILABLE AGENTS
+    -------------------------------------------------
+
+    {available_agents}
+
+    -------------------------------------------------
+    AGENT RULES
+    -------------------------------------------------
+
+    resume_agent:
+    - Use for personal information / profile / resume
+    - Params:
+    - {user_input}
+    - top_k
+
+    job_search_agent:
+    - Use for job search / job listings
+    - Params:
+    - user_input
+    - location
+    - per_page
+    - page
+
+    email_agent:
+    - Use for sending emails / forwarding
+    - Params:
+    - context
+    - user_email
+
+    -------------------------------------------------
+    STRICT RULES
+    -------------------------------------------------
+
+    1. ONLY use listed agents
+    2. NEVER invent parameters or values
+    3. ONLY extract values from user input
+    4. If missing value → set null
+    5. ALWAYS preserve execution order logically:
+    - fetch data first
+    - email last if needed
+    6. top_k always 5
+    7. DO NOT use:
+    - use_previous_output
+    - context chaining
+    - dependencies between steps
+
+    Each step must be INDEPENDENT.
+
+    -------------------------------------------------
+    OUTPUT FORMAT
+    -------------------------------------------------
+
+    {{
+    "steps": [
+        {{
+        "agent": "agent_name",
+        "params": {{
+            "key": "value"
+        }}
+        }}
+    ]
+    }}
+
+    -------------------------------------------------
+    EXAMPLE
+    -------------------------------------------------
+
+    User:
+    Send John Smith personal information to john@gmail.com
+
+    Output:
+    {{
+    "steps": [
+        {{
+        "agent": "resume_agent",
+        "params": {{
+            "user_input": {user_input},
+            "top_k": 5
+        }}
+        }},
+        {{
+        "agent": "email_agent",
+        "params": {{
+            "recipient": "john@gmail.com",
+            "context": "John Smith personal information"
+        }}
+        }}
+    ]
+    }}
+
+    -------------------------------------------------
+    USER INPUT
+    -------------------------------------------------
+
+    {user_input}
+    """
+    )
+
+    try:
+        chain = prompt | llm
+
+        response = chain.invoke({
+            "user_input": user_input,
+            "available_agents": available_agents
+        })
+
+        logger.info(response.content)
+
+        parsed = json.loads(response.content)
+
+        result = MCPToolResult(
+            success=True,
+            tool_name=tool_name,
+            result={
+                "steps": parsed["steps"]
+            },
+            message="Execution plan created successfully"
+        )
+
+        logger.info(result)
+
+        return result.model_dump()
+
+    except Exception as e:
+        logger.exception("Planner tool failed")
+
+        return MCPToolResult(
+            success=False,
+            tool_name=tool_name,
+            result={},
+            error=str(e),
+            message="Failed to generate execution plan"
+        ).model_dump()
+
+
+
 
 
 

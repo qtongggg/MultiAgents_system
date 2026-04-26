@@ -116,7 +116,7 @@ class ResumeSearchRequest(BaseModel):
 
 class RagQueryRequest(BaseModel):
     question: str
-    top_k: int = 5
+
 
 # =========================================================
 # UTIL
@@ -164,6 +164,16 @@ resume_agent = ResumeAgentClass(AgentInfo(
 ))
 
 registry.register('resume_agent', resume_agent)
+
+from Agents.planner_agent import PlannerAgent as PlannerAgentClass
+
+planner_agent = PlannerAgentClass(AgentInfo(
+    name = "planner_agent",
+    description= "AN Agent that can planner the task by using the existing agent that we are created "),
+    registry
+)
+
+registry.register('planner_agent', planner_agent)
 # =========================================================
 # API ROUTES (NOW CLEAN)
 # =========================================================
@@ -224,8 +234,7 @@ async def search_jobs_api(payload: JobSearchRequest):
 async def query_rag(payload: RagQueryRequest):
     try:
         return await orchestrator.run_pipeline(
-            payload.question,
-            payload.top_k
+            payload.question
         )
 
     except Exception as e:

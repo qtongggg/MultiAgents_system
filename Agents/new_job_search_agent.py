@@ -22,11 +22,9 @@ class JobSearchAgent(BaseAgent):
 
     async def run_background_task(self, coro, logger, task_name="task"):
         try:
-            logger.info(f"[{task_name}] START")
 
             result = await coro
 
-            logger.info(f"[{task_name}] SUCCESS RESULT: {result}")
 
         except Exception as e:
             logger.error(f"[{task_name}] FAILED: {e}", exc_info=True)
@@ -44,7 +42,7 @@ class JobSearchAgent(BaseAgent):
                 search_jobs_tool,
                 {
                     "keyword": user_input,
-                    "location": location,
+                    "location": location or "malaysia",
                     "per_page": per_page,
                     "page": page 
                 }
@@ -99,19 +97,19 @@ class JobSearchAgent(BaseAgent):
                 )
             )
 
-            #####################
-            # 4. Email agent 
-            #####################            
-            email_agent = EmailAgent(
-                AgentInfo(
-                    name="EmailAgent",
-                    description="An agent that generates email content based on job search results."
-                )
-            )
-            await email_agent.run(
-                context=matched_jobs,
-                user_email="smartqingtong@gmail.com"
-            )
+            # #####################
+            # # 4. Email agent 
+            # #####################            
+            # email_agent = EmailAgent(
+            #     AgentInfo(
+            #         name="EmailAgent",
+            #         description="An agent that generates email content based on job search results."
+            #     )
+            # )
+            # await email_agent.run(
+            #     context=matched_jobs,
+            #     user_email="smartqingtong@gmail.com"
+            # )
             
 
             #####################

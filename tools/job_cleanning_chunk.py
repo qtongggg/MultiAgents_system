@@ -311,7 +311,6 @@ def ingest_jobs_to_qdrant(jobs: list):
 
     embed_texts_list = [build_embed_text(job) for job, _ in new_jobs]
 
-    print(f"Embedding {len(embed_texts_list)} jobs...", file=sys.stderr)
 
     dense_vectors = embed_texts(embed_texts_list)
     sparse_vectors = [embed_sparse(text) for text in embed_texts_list]
@@ -361,11 +360,8 @@ def ingest_jobs_to_qdrant(jobs: list):
             )
         )
 
-    print(f"Upserting {len(points)} job points...", file=sys.stderr)
 
     qdrant_client.upsert(
         collection_name="job_chunks_hybrid",
         points=points,
     )
-
-    print("Hybrid Qdrant upsert complete", file=sys.stderr)
