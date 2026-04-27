@@ -395,7 +395,7 @@ def match_jobs_tool(jobs: list[dict]) -> dict:
         - If the role is for fresh graduates / junior / entry-level and the resume matches, increase the fit_score
         - matching_skills: short skill/tool names found in BOTH resume and job; may include matched experience level phrases
         - missing_skills: short skill names, tool names, and important missing experience requirements; max 10 items
-        - reason: 2-3 sentences explicitly mentioning whether the candidate meets, partially meets, or does not meet the required experience level
+        - reason: 4~5 sentences explicitly mentioning whether the candidate meets, partially meets, or does not meet the required experience level
         """)
 
         # ✅ Structured LLM (KEY CHANGE)
@@ -1139,7 +1139,7 @@ def planner_tool(user_input, available_agents ):
     }}
 
     -------------------------------------------------
-    EXAMPLE
+    EXAMPLE 1
     -------------------------------------------------
 
     User:
@@ -1165,6 +1165,83 @@ def planner_tool(user_input, available_agents ):
     ]
     }}
 
+    -------------------------------------------------
+    EXAMPLE 2
+    -------------------------------------------------
+
+    User:
+    Search me a job about AI Engineer in Malaysia
+
+    Output:
+    {{
+    "steps": [
+        {{
+        "agent": "job_search_agent",
+        "params": {{
+            "user_input": "AI Engineer",
+            "location": "Malaysia",
+            "per_page": 1,
+            "page": 1
+        }}
+        }}
+    ]
+    }}
+
+    -------------------------------------------------
+    EXAMPLE 3
+    -------------------------------------------------
+
+    User:
+    Find me one AI Engineer job and send it to smartqingtong@gmail.com
+
+    Output:
+    {{
+    "steps": [
+        {{
+        "agent": "job_search_agent",
+        "params": {{
+            "user_input": "AI Engineer",
+            "location": "Malaysia",
+            "per_page": 1,
+            "page": 1
+        }}
+        }},
+        {{
+        "agent": "email_agent",
+        "params": {{
+            "recipient": "smartqingtong@gmail.com",
+            "context": "AI Engineer job information"
+        }}
+        }}
+    ]
+    }}
+
+    -------------------------------------------------
+    EXAMPLE 4
+    -------------------------------------------------
+
+    User:
+    Find John Smith profile and send it to john@gmail.com
+
+    Output:
+    {{
+    "steps": [
+        {{
+        "agent": "resume_agent",
+        "params": {{
+            "user_input": "John Smith",
+            "top_k": 5
+        }}
+        }},
+        {{
+        "agent": "email_agent",
+        "params": {{
+            "recipient": "john@gmail.com",
+            "context": "John Smith personal information"
+        }}
+        }}
+    ]
+    }}
     -------------------------------------------------
     USER INPUT
     -------------------------------------------------
@@ -1211,6 +1288,7 @@ def planner_tool(user_input, available_agents ):
 
 
 
+    
 
 
 

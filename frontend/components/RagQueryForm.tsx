@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { uploadPdf } from "@/lib/api";
 
 type RagQueryFormProps = {
@@ -20,10 +20,11 @@ export default function RagQueryForm({
 }: RagQueryFormProps) {
   const [question, setQuestion] = useState("");
   const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!question.trim()) return;
+    if (!question.trim() || loading) return;
 
     const currentQuestion = question.trim();
     setQuestion("");
@@ -31,7 +32,7 @@ export default function RagQueryForm({
     try {
       await onSend(currentQuestion);
     } catch (error) {
-      console.error(error);
+      console.error("Error sending message:", error);
     }
   }
 
@@ -48,40 +49,79 @@ export default function RagQueryForm({
       const fileUrl = URL.createObjectURL(file);
       onUploadSuccess(file.name, fileUrl);
     } catch (error) {
-      console.error(error);
+      console.error("Upload error:", error);
       onUploadError(file.name);
     } finally {
       setUploading(false);
-      e.target.value = "";
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
     }
   }
 
+  const isDisabled = uploading || loading;
+
   return (
-    <form onSubmit={handleSubmit} className="flex items-center gap-3">
-      <label className="flex h-12 w-12 shrink-0 cursor-pointer items-center justify-center rounded-2xl border border-[#B3B3B3] bg-[#FFFFFF] text-xl text-[#2B2B2B] shadow-sm transition hover:bg-[#F3F3F3]">
-        {uploading ? "…" : "+"}
+    <form
+      onSubmit={handleSubmit}
+      className="flex items-center gap-3 w-full"
+    >
+      {/* File Upload Button */}
+      <label
+        className={`flex h-11 w-11 flex-shrink-0 cursor-pointer items-center justify-center rounded-xl border-2 transition-all duration-200 ${
+          isDisabled
+            ? "cursor-not-allowed border-[#D3D3D3] bg-[#F9F9F9] text-[#999]"
+            : "border-[#E5E5E5] bg-white text-[#2B2B2B] hover:border-[#2B2B2B] hover:bg-[#F8F8F8] active:scale-95"
+        }`}
+        title={isDisabled ? "Uploading or sending..." : "Upload a PDF"}
+      >
+        <span className="text-lg font-light select-none">
+          {uploading ? "⋯" : "+"}
+        </span>
         <input
+          ref={fileInputRef}
           type="file"
           accept="application/pdf"
           className="hidden"
           onChange={handleFileChange}
-          disabled={uploading || loading}
+          disabled={isDisabled}
+          aria-label="Upload PDF file"
         />
       </label>
 
+      {/* Text Input */}
       <input
         value={question}
         onChange={(e) => setQuestion(e.target.value)}
-        placeholder="Ask something about your PDF..."
-        className="flex-1 rounded-2xl border border-[#B3B3B3] bg-[#FFFFFF] px-4 py-3 text-[#2B2B2B] placeholder:text-[#8A8A8A] outline-none transition focus:border-[#2B2B2B]"
+        placeholder={uploading ? "Uploading PDF..." : "Ask about your document..."}
+        disabled={isDisabled}
+        className={`flex-1 rounded-xl border-2 px-4 py-2.5 text-[15px] transition-all duration-200 outline-none ${
+          isDisabled
+            ? "border-[#E5E5E5] bg-[#F9F9F9] text-[#999] cursor-not-allowed"
+            : "border-[#E5E5E5] bg-white text-[#2B2B2B] placeholder:text-[#999] focus:border-[#2B2B2B] focus:bg-white hover:border-[#D5D5D5]"
+        }`}
+        aria-label="Enter your question"
       />
 
+      {/* Submit Button */}
       <button
         type="submit"
-        disabled={loading}
-        className="shrink-0 rounded-2xl bg-[#2B2B2B] px-5 py-3 font-medium text-white shadow-sm transition hover:opacity-90 disabled:opacity-50"
+        disabled={isDisabled || !question.trim()}
+        className={`flex-shrink-0 rounded-xl px-5 py-2.5 font-medium text-white transition-all duration-200 active:scale-95 ${
+          isDisabled || !question.trim()
+            ? "cursor-not-allowed bg-[#B3B3B3]"
+            : "bg-[#2B2B2B] hover:bg-[#1a1a1a]"
+        }`}
+        aria-label={loading ? "Generating response..." : "Send message"}
       >
-        {loading ? "Generating..." : "Ask"}
+        {loading ? (
+          <span className="inline-flex items-center gap-1.5">
+            <span className="inline-block w-1 h-1 bg-white rounded-full animate-pulse" />
+            Generating
+          </span>
+        ) : (
+          "Ask"
+        )}
       </button>
     </form>
   );

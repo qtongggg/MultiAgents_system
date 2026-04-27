@@ -25,6 +25,7 @@ from Agents.orchestrator import OrchestratorAgent
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
 
+logger = logging.getLogger(__name__)
 # =========================================================
 # ORCHESTRATOR (GLOBAL SINGLE INSTANCE)
 # =========================================================
@@ -207,6 +208,9 @@ async def search_jobs_api(payload: JobSearchRequest):
             per_page=payload.per_page,
             page=1
         )
+
+        
+        logger.info(result)
 
         return result
 
