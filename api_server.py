@@ -60,8 +60,8 @@ def start_scheduler():
     scheduler.add_job(
         run_scheduled_job,
         trigger="cron",
-        hour=11,  # every day at 11am
-        minute=9,
+        hour=14,  # every day at 11am
+        minute=34,
     )
     scheduler.start()
     print("⏰ Scheduler started")

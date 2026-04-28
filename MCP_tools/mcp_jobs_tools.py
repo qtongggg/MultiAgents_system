@@ -782,11 +782,13 @@ def search_resume(
 
     state = make_agent_state()
 
-    state["tool"] = "search_resume"
-    state["intent"] = "resume"
-    state["rewritten_query"] = question
-    state["candidate_name"] = candidate_name
-    state["mode"] = "resume"
+    state.update({
+        "tool": "search_resume",
+        "intent": "resume",
+        "rewritten_query": question,
+        "candidate_name": candidate_name,
+        "mode": "resume"
+    })
 
     try:
         # -----------------------------
@@ -796,7 +798,7 @@ def search_resume(
         sparse_indices, sparse_values = embed_sparse(question)
 
         # -----------------------------
-        # BUILD FILTER
+        # FILTER
         # -----------------------------
         query_filter = None
         target_source_id = None
@@ -838,9 +840,6 @@ def search_resume(
             query_filter=query_filter,
         )
 
-        # -----------------------------
-        # DEBUG (IMPORTANT)
-        # -----------------------------
         logger.info(f"[search_resume] points returned = {len(response.points)}")
 
         chunks = []
@@ -849,11 +848,8 @@ def search_resume(
         for point in response.points:
             payload = point.payload or {}
 
-            logger.debug(f"PAYLOAD: {payload}")
-
-            # support BOTH flat and nested formats
-            text = payload.get("text") or payload.get("payload", {}).get("text", "")
-            source_id = payload.get("source_id") or payload.get("payload", {}).get("source_id", "")
+            text = payload.get("text", "")
+            source_id = payload.get("source_id", "")
 
             chunks.append({
                 "text": text,
@@ -863,7 +859,7 @@ def search_resume(
             scores.append(float(point.score or 0.0))
 
         # -----------------------------
-        # FALLBACK 1: filter returned nothing
+        # FALLBACK (remove filter if empty)
         # -----------------------------
         if not chunks and query_filter is not None:
             logger.warning("[search_resume] filter returned 0 results → retrying without filter")
@@ -892,30 +888,22 @@ def search_resume(
             for point in response.points:
                 payload = point.payload or {}
 
-                text = payload.get("text") or payload.get("payload", {}).get("text", "")
-                source_id = payload.get("source_id") or payload.get("payload", {}).get("source_id", "")
-
                 chunks.append({
-                    "text": text,
-                    "source_id": source_id,
+                    "text": payload.get("text", ""),
+                    "source_id": payload.get("source_id", ""),
                 })
 
                 scores.append(float(point.score or 0.0))
 
         # -----------------------------
-        # EMPTY RESULT HANDLING
+        # EMPTY RESULT
         # -----------------------------
         if not chunks:
             return {
                 "ok": True,
-                "data": {
-                    "chunks": [],
-                    "count": 0
-                },
+                "data": {"chunks": [], "count": 0},
                 "error": None,
-                "meta": {
-                    "message": "no resume chunks found"
-                }
+                "meta": {"message": "no resume chunks found"}
             }
 
         # -----------------------------
@@ -930,15 +918,6 @@ def search_resume(
 
         if not reranked:
             reranked = chunks[:top_k]
-
-        # -----------------------------
-        # FINAL RESPONSE
-        # -----------------------------
-        state.update({
-            "ok": True,
-            "result": reranked,
-            "error": None,
-        })
 
         return {
             "ok": True,
@@ -958,10 +937,7 @@ def search_resume(
 
         return {
             "ok": False,
-            "data": {
-                "chunks": [],
-                "count": 0
-            },
+            "data": {"chunks": [], "count": 0},
             "error": str(e),
             "meta": {}
         }
@@ -1067,7 +1043,7 @@ def planner_tool(user_input, available_agents):
     No markdown.
     No extra text.
 
-    -------------------------------------------------
+    ------------------------------------------------- 
     AVAILABLE AGENTS
     -------------------------------------------------
 
@@ -1104,7 +1080,7 @@ def planner_tool(user_input, available_agents):
 
     1. ONLY use listed agents
     2. NEVER invent parameters or values
-    3. ONLY extract values from user input
+    3. ALWAYS pass the FULL original user input as "user_input". DO NOT shorten, summarize, or extract partial values.
     4. If missing value → set null
     5. ALWAYS preserve execution order logically:
        - fetch data first
@@ -1117,6 +1093,9 @@ def planner_tool(user_input, available_agents):
     8. If the user request does NOT clearly match any agent:
        - You MUST use qa_agent
        - NEVER return empty steps
+    9. For "user_input":
+        - MUST be the EXACT original user sentence
+        - DO NOT modify or shorten it
 
     Each step must be INDEPENDENT.
 
@@ -1198,6 +1177,21 @@ def planner_tool(user_input, available_agents):
         ]
     }}
 
+    User:
+    give me the phone number of mah qing tong from his resume
+
+    Output:
+    {{
+        "steps": [
+            {{
+                "agent": "resume_agent",
+                "params": {{
+                    "user_input": "give me the phone number of mah qing tong from his resume",
+                    "top_k": 5
+                }}
+            }}
+        ]
+    }}
     -------------------------------------------------
     USER INPUT
     -------------------------------------------------
@@ -1214,7 +1208,7 @@ def planner_tool(user_input, available_agents):
             "available_agents": available_agents
         })
 
-        logger.info(response.content)
+        logger.info(f"planner tool {response.content}")
 
         # ✅ Safe parsing with fallback
         try:
@@ -1481,6 +1475,130 @@ def clarification_tool(user_input):
             error=str(e),
             message="Clarification failed, defaulting to ready"
         ).model_dump()
+    
+
+@mcp.tool()
+def analyze_query_with_llm(question: str) -> dict:
+    state = make_agent_state()
+    state["tool"] = "analyze_query_with_llm"
+
+    prompt = ChatPromptTemplate.from_template("""
+    You are a query analysis assistant for an HR AI system.
+
+    Your task:
+    1. Detect the user's primary intent
+    2. Extract company_name if clearly mentioned
+    3. Extract location if clearly mentioned
+    4. Extract candidate_name if clearly mentioned
+    5. Rewrite the query into a concise retrieval-friendly query
+
+    Allowed intents:
+    - resume
+    - job_details
+    - job_search
+    - qa
+
+    Intent meaning:
+    - resume: questions about candidate profile, resume, skills, education, experience, qualifications, projects, fit
+    - job_details: questions asking to summarize a company or summarize jobs from a company
+    - job_search: questions asking to list, find, show, or retrieve jobs
+    - qa: all other general questions
+
+    Rules:
+    - Return ONLY valid JSON
+    - Do not explain
+    - Do not add markdown
+    - If no company is mentioned, use null
+    - If no location is mentioned, use null
+    - If no candidate name is mentioned, use null
+    - candidate_name must be lowercase_with_underscores if present
+    - rewritten_query must preserve the original meaning
+    - rewritten_query should remove conversational filler and be optimized for retrieval/search
+    - Do not invent facts not implied by the question
+
+    Return this exact JSON format:
+    {{
+      "rewritten_query": "string",
+      "intent": "resume|job_details|job_search|qa",
+      "company_name": null,
+      "location": null,
+      "candidate_name": null
+    }}
+
+    Examples:
+
+    User: Show me jobs from Grab in Malaysia
+    Output:
+    {{"rewritten_query":"grab jobs openings roles positions malaysia hiring","intent":"job_search","company_name":"Grab","location":"Malaysia","candidate_name":null}}
+
+    User: Summarize the company Grab
+    Output:
+    {{"rewritten_query":"grab company summary overview roles hiring","intent":"job_details","company_name":"Grab","location":null,"candidate_name":null}}
+
+    User: Give me the resume of Hoo Vi Ying
+    Output:
+    {{"rewritten_query":"hoo vi ying resume profile education skills experience projects contact information","intent":"resume","company_name":null,"location":null,"candidate_name":"hoo_vi_ying"}}
+
+    User: What skills does this candidate have?
+    Output:
+    {{"rewritten_query":"candidate resume skills technical skills qualifications tools experience","intent":"resume","company_name":null,"location":null,"candidate_name":null}}
+
+    User: What is RAG?
+    Output:
+    {{"rewritten_query":"RAG retrieval augmented generation explanation","intent":"qa","company_name":null,"location":null,"candidate_name":null}}
+
+    User question:
+    {question}
+    """)
+
+    try:
+        chain = prompt | llm
+        response = chain.invoke({"question": question})
+        content = response.content.strip()
+
+        parsed = json.loads(content)
+
+        rewritten_query = parsed.get("rewritten_query", question)
+        intent = parsed.get("intent", "qa")
+        company_name = parsed.get("company_name")
+        location = parsed.get("location")
+        candidate_name = parsed.get("candidate_name")       
+
+        allowed_intents = {"resume", "job_details", "job_search", "qa"}
+        if intent not in allowed_intents:
+            intent = "qa"
+
+        if not isinstance(rewritten_query, str) or not rewritten_query.strip():
+            rewritten_query = question
+
+        logger.info(f"Query analysis result: intent={intent}, company_name={company_name}, location={location}, candidate_name={candidate_name}, rewritten_query={rewritten_query}")
+
+        state.update({
+            "intent": intent,
+            "company_name": company_name,
+            "location": location,
+            "candidate_name": candidate_name,
+            "rewritten_query": rewritten_query.strip(),
+            "result": None,
+            "mode": "resume" if intent == "resume" else intent,
+            "error": None,
+            "ok": True,
+        })
+        return state
+
+    except Exception as e:
+        state.update({
+            "ok": False,
+            "intent": "qa",
+            "company_name": None,
+            "location": None,
+            "candidate_name": None,
+            "rewritten_query": question,
+            "result": None,
+            "mode": "qa",
+            "error": str(e),
+        })
+        return state
 # ============================================================================
 # Server Entry Point
 # ============================================================================

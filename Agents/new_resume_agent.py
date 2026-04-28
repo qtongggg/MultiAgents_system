@@ -22,6 +22,12 @@ class ResumeAgent(BaseAgent):
         try:
             mcp_tools = await self.get_tools()
 
+
+
+            # -------------------------------
+            # 0. Query Rewritting
+            # -------------------------------
+            
             # -------------------------------
             # 1. SEARCH RESUME
             # -------------------------------

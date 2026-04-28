@@ -2,8 +2,8 @@
 
 import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowRight } from "lucide-react";
-import { askRagQuestion } from "@/lib/api";
+import { ArrowRight, Paperclip } from "lucide-react";
+import { askRagQuestion, uploadPdf } from "@/lib/api";
 import ReactMarkdown from "react-markdown";
 
 type Job = {
@@ -27,13 +27,17 @@ export default function RagLandingPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
 
+  // 🔥 Upload states
+  const [file, setFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
-  // 🔥 Suggestion Cards
+  // 🔥 Suggestions
   const suggestionCards = [
     {
       title: "📄 Review my resume",
@@ -57,6 +61,7 @@ export default function RagLandingPage() {
     },
   ];
 
+  // 🔥 HANDLE CHAT
   async function handleSend(question: string) {
     if (!question.trim()) return;
 
@@ -123,10 +128,41 @@ export default function RagLandingPage() {
     }
   }
 
+  // 🔥 HANDLE PDF UPLOAD
+  async function handleFileUpload(selectedFile: File) {
+    try {
+      setUploading(true);
+      setFile(selectedFile);
+
+      await uploadPdf(selectedFile);
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          type: "text",
+          content:
+            "✅ Resume uploaded successfully. You can now ask questions about it.",
+        },
+      ]);
+    } catch {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          type: "text",
+          content: "❌ Upload failed.",
+        },
+      ]);
+    } finally {
+      setUploading(false);
+    }
+  }
+
   return (
     <main className="flex flex-col h-screen bg-[#f5f5f5] text-gray-900">
 
-      {/* Header */}
+      {/* HEADER */}
       <div className="text-center pt-8 px-6">
         <motion.h1
           initial={{ opacity: 0, y: 10 }}
@@ -141,11 +177,11 @@ export default function RagLandingPage() {
         </p>
       </div>
 
-      {/* Chat Area */}
-      <div className="flex-1 overflow-y-auto px-6 mt-6 pb-28">
+      {/* CHAT */}
+      <div className="flex-1 overflow-y-auto px-6 mt-6 pb-32">
         <div className="max-w-5xl mx-auto space-y-6">
 
-          {/* 🔥 EMPTY STATE (Homepage UI) */}
+          {/* EMPTY STATE */}
           {messages.length === 0 && (
             <div className="flex flex-col items-center justify-center mt-20 text-center">
               <h2 className="text-2xl font-semibold text-gray-800">
@@ -161,13 +197,10 @@ export default function RagLandingPage() {
                   <motion.div
                     key={i}
                     whileHover={{ scale: 1.03, y: -4 }}
-                    onClick={() => {
-                      setInput(card.prompt);
-                      handleSend(card.prompt);
-                    }}
-                    className="cursor-pointer rounded-xl border border-gray-200 bg-white p-4 text-left shadow-sm hover:shadow-md transition"
+                    onClick={() => handleSend(card.prompt)}
+                    className="cursor-pointer rounded-xl border bg-white p-4 shadow-sm hover:shadow-md"
                   >
-                    <p className="font-medium text-gray-900">{card.title}</p>
+                    <p className="font-medium">{card.title}</p>
                     <p className="text-sm text-gray-500 mt-1">
                       {card.description}
                     </p>
@@ -177,170 +210,108 @@ export default function RagLandingPage() {
             </div>
           )}
 
-          {/* 🔥 CHAT */}
-          {messages.length > 0 && (
-            <AnimatePresence>
-              {messages.map((msg, i) => (
-                <motion.div
-                  key={i}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className={`flex ${
-                    msg.role === "user" ? "justify-end" : "justify-start"
-                  }`}
-                >
-                  {/* TEXT */}
-                  {msg.type === "text" && (
-                    <div className="max-w-3xl">
-                      <div
-                        className={`inline-block px-4 py-2 rounded-2xl ${
-                          msg.role === "user"
-                            ? "bg-gray-900 text-white ml-auto"
-                            : "text-gray-800"
-                        }`}
-                      >
-                        <div className="prose max-w-none">
-                          <ReactMarkdown>{msg.content}</ReactMarkdown>
-                        </div>
+          {/* MESSAGES */}
+          <AnimatePresence>
+            {messages.map((msg, i) => (
+              <motion.div
+                key={i}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className={`flex ${
+                  msg.role === "user" ? "justify-end" : "justify-start"
+                }`}
+              >
+                {msg.type === "text" && (
+                  <div className="max-w-3xl">
+                    <div
+                      className={`px-4 py-2 rounded-2xl ${
+                        msg.role === "user"
+                          ? "bg-gray-900 text-white"
+                          : "text-gray-800"
+                      }`}
+                    >
+                      <ReactMarkdown>{msg.content}</ReactMarkdown>
+                    </div>
+                  </div>
+                )}
+
+                {msg.type === "jobs" && (
+                  <div className="space-y-4 w-full">
+                    {msg.jobs.map((job, j) => (
+                      <div key={j} className="rounded-xl p-4 bg-white border">
+                        <p className="font-semibold">{job.title}</p>
+                        <p className="text-sm text-gray-500">
+                          {job.company} • {job.location}
+                        </p>
                       </div>
-                    </div>
-                  )}
+                    ))}
+                  </div>
+                )}
+              </motion.div>
+            ))}
+          </AnimatePresence>
 
-                  {/* JOBS */}
-                  {msg.type === "jobs" && (
-                    <div className="space-y-4 w-full">
-                      {msg.jobs.map((job, j) => (
-                        <motion.div
-                          key={j}
-                          whileHover={{ scale: 1.02, y: -4 }}
-                          className="rounded-xl p-4 bg-white border border-gray-200 space-y-3"
-                        >
-                          {/* Header */}
-                          <div className="flex justify-between">
-                            <div>
-                              <p className="font-semibold">{job.title}</p>
-                              <p className="text-sm text-gray-500">
-                                {job.company} • {job.location}
-                              </p>
-                            </div>
-
-                            {job.link && (
-                              <a
-                                href={job.link}
-                                target="_blank"
-                                className="text-sm px-3 py-1 rounded-full bg-gray-900 text-white hover:bg-gray-700"
-                              >
-                                Apply
-                              </a>
-                            )}
-                          </div>
-
-                          {/* Reason */}
-                          {job.reason && (
-                            <p className="text-sm text-gray-600">
-                              {job.reason}
-                            </p>
-                          )}
-
-                          {/* Matching Skills */}
-                          {job.matching_skills && (
-                            <div>
-                              <p className="text-xs text-gray-500 mb-1">
-                                Matching Skills
-                              </p>
-                              <div className="flex flex-wrap gap-2">
-                                {job.matching_skills.map((s, i) => (
-                                  <span
-                                    key={i}
-                                    className="text-xs px-2 py-1 bg-green-100 text-green-700 rounded-full"
-                                  >
-                                    {s}
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Missing Skills */}
-                          {job.missing_skills && (
-                            <div>
-                              <p className="text-xs text-gray-500 mb-1">
-                                Missing Skills
-                              </p>
-                              <div className="flex flex-wrap gap-2">
-                                {job.missing_skills.map((s, i) => (
-                                  <span
-                                    key={i}
-                                    className="text-xs px-2 py-1 bg-gray-200 text-gray-600 rounded-full"
-                                  >
-                                    {s}
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Score */}
-                          {job.fit_score !== undefined && (
-                            <div>
-                              <p className="text-xs text-gray-600 mb-1">
-                                Match: {Math.round(job.fit_score * 100)}%
-                              </p>
-                              <div className="h-2 bg-gray-200 rounded-full">
-                                <motion.div
-                                  initial={{ width: 0 }}
-                                  animate={{
-                                    width: `${job.fit_score * 100}%`,
-                                  }}
-                                  className="h-full bg-gray-900"
-                                />
-                              </div>
-                            </div>
-                          )}
-                        </motion.div>
-                      ))}
-                    </div>
-                  )}
-                </motion.div>
-              ))}
-            </AnimatePresence>
-          )}
-
-          {/* Loader */}
-          {loading && (
-            <div className="flex gap-1">
-              {[0, 1, 2].map((i) => (
-                <motion.span
-                  key={i}
-                  className="w-2 h-2 bg-gray-400 rounded-full"
-                  animate={{ y: [0, -6, 0] }}
-                  transition={{ duration: 0.6, repeat: Infinity, delay: i * 0.2 }}
-                />
-              ))}
-            </div>
-          )}
+          {/* LOADING */}
+          {loading && <p className="text-sm text-gray-400">Thinking...</p>}
 
           <div ref={bottomRef} />
         </div>
       </div>
 
-      {/* Input */}
+      {/* INPUT + UPLOAD */}
       <div className="fixed bottom-4 left-1/2 -translate-x-1/2 w-full max-w-2xl px-4">
-        <div className="flex items-center gap-2 rounded-full border bg-white px-3 py-2 shadow-sm">
-          <input
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            className="flex-1 outline-none text-sm"
-          />
-          <button
-            onClick={() => {
-              handleSend(input);
-              setInput("");
-            }}
-            className="p-2 bg-gray-900 text-white rounded-full"
-          >
-            <ArrowRight size={16} />
-          </button>
+        <div className="flex flex-col gap-2 rounded-2xl border bg-white px-3 py-2 shadow-sm">
+
+          {/* FILE PREVIEW */}
+          {file && (
+            <div className="flex justify-between bg-gray-100 px-3 py-1 rounded-lg text-sm">
+              <span>{file.name}</span>
+              <button onClick={() => setFile(null)} className="text-red-500">
+                remove
+              </button>
+            </div>
+          )}
+
+          <div className="flex items-center gap-2">
+
+            {/* UPLOAD */}
+            <label className="cursor-pointer p-2 hover:bg-gray-100 rounded-full">
+              <Paperclip size={16} />
+              <input
+                type="file"
+                accept=".pdf"
+                hidden
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) handleFileUpload(f);
+                }}
+              />
+            </label>
+
+            {/* INPUT */}
+            <input
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              className="flex-1 outline-none text-sm"
+              placeholder="Ask about your resume..."
+            />
+
+            {/* SEND */}
+            <button
+              onClick={() => {
+                handleSend(input);
+                setInput("");
+              }}
+              disabled={uploading}
+              className="p-2 bg-gray-900 text-white rounded-full"
+            >
+              <ArrowRight size={16} />
+            </button>
+          </div>
+
+          {uploading && (
+            <p className="text-xs text-gray-500">Uploading resume...</p>
+          )}
         </div>
       </div>
     </main>

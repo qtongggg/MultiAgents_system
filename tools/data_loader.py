@@ -61,6 +61,9 @@ def get_reranker():
 def get_sparse_model():
     return SparseTextEmbedding(model_name="Qdrant/bm25")
 
+def normalize_source_id(name: str) -> str:
+    return name.strip().lower().replace(" ", "_") + "_resume.pdf"
+
 # -------------------------------------------------------------------
 # Chunking
 # -------------------------------------------------------------------
@@ -214,31 +217,21 @@ def search_resume(question: str, top_k: int, candidate_name: str | None = None) 
 # Hybrid search for jobs
 # -------------------------------------------------------------------
 def hybrid_search_jobs(question: str, top_k: int = 5) -> dict:
-    """
-    Returns a dict in a shape compatible with rerank_results():
-    {
-        "payloads": [...],
-        "scores": [...]
-    }
-    """
+
     dense_query = embed_dense(question)
     sparse_indices, sparse_values = embed_sparse(question)
 
     response = qdrant_client.query_points(
         collection_name=JOB_COLLECTION_HYBRID,
         prefetch=[
-            models.Prefetch(
-                query=dense_query,
-                using="dense",
-                limit=max(top_k * 4, 20),
-            ),
+            models.Prefetch(query=dense_query, using="dense", limit=top_k * 4),
             models.Prefetch(
                 query=models.SparseVector(
                     indices=sparse_indices,
                     values=sparse_values,
                 ),
                 using="sparse",
-                limit=max(top_k * 4, 20),
+                limit=top_k * 4,
             ),
         ],
         query=models.FusionQuery(fusion=models.Fusion.RRF),
@@ -247,13 +240,12 @@ def hybrid_search_jobs(question: str, top_k: int = 5) -> dict:
         with_vectors=False,
     )
 
-    payloads: list[dict[str, Any]] = []
-    scores: list[float] = []
+    payloads = []
+    scores = []
 
     for point in response.points:
-        payload = dict(point.payload or {})
-        payloads.append(payload)
-        scores.append(float(point.score) if point.score is not None else 0.0)
+        payloads.append(dict(point.payload or {}))
+        scores.append(float(point.score or 0.0))
 
     return {
         "payloads": payloads,

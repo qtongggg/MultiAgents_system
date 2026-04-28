@@ -5,7 +5,6 @@ from typing import Optional, List
 from pydantic import BaseModel, Field
 
 from Agents.Agent_Registry import AgentRegistry
-from Agents.router_agent import detect_intent_with_llm
 from custom.custom_types import AgentResult
 logger = logging.getLogger(__name__)
 
