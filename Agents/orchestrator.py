@@ -126,6 +126,8 @@ class OrchestratorAgent:
         logger.info("🔥 START PLANNER PIPELINE")
 
         try:
+            
+
             # ---------------------------------
             # 1. PLAN
             # ---------------------------------

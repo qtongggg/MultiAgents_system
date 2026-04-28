@@ -38,6 +38,10 @@ class JobSearchAgent(BaseAgent):
             mcp_tools = await self.get_tools()
             search_jobs_tool = mcp_tools["search_jobs_tool"]
 
+
+            if not user_input:
+                user_input = "software engineer"
+            
             search_result = await self.execute_tool(
                 search_jobs_tool,
                 {

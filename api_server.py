@@ -186,6 +186,15 @@ qa_agent = QaAgentClass(AgentInfo(
 )
 
 registry.register('qa_agent', qa_agent)
+
+from Agents.clarification_agent import ClarificationAgent as ClarificationAgentClass
+
+clarification_agent = ClarificationAgentClass(AgentInfo(
+    name = "clarification_agent",
+    description= "an agent that help us to check about the missing params and so on")
+)
+registry.register('clarification_agent', clarification_agent)
+
 # =========================================================
 # API ROUTES (NOW CLEAN)
 # =========================================================

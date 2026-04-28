@@ -993,6 +993,7 @@ def summarize_tool(context: str, question: str) -> dict:
         You are a professional HR resume assistant.
 
         Your task is to answer the question using ONLY the provided resume context.
+        
 
         Rules:
         - Use only the context provided
@@ -1090,7 +1091,7 @@ def planner_tool(user_input, available_agents):
     - Use for sending emails / forwarding
     - Params:
       - context
-      - recipient
+      - user_email
 
     qa_agent:
     - Use for general questions, unclear intent, or unsupported requests
@@ -1189,8 +1190,9 @@ def planner_tool(user_input, available_agents):
             {{
                 "agent": "email_agent",
                 "params": {{
-                    "recipient": "john@gmail.com",
-                    "context": "AI job information"
+                    
+                    "context": "AI job information",
+                    "user_email": "john@gmail.com"
                 }}
             }}
         ]
@@ -1349,20 +1351,14 @@ def qa_tool(user_input, available_agents):
         })
 
         logger.info(response.content)
+
         
-        parsed = json.loads(response.content)
-
-        parsed = {
-            "answer": response.content,
-            "suggestions": []
-        }
-
         result = MCPToolResult(
             success=True,
             tool_name=tool_name,
             result={
-                "answer": parsed.get("answer", ""),
-                "suggestions": parsed.get("suggestions", [])
+                "answer": response.content,
+                "suggestions": []
             },
             message="QA response generated successfully"
         )
@@ -1381,7 +1377,110 @@ def qa_tool(user_input, available_agents):
         ).model_dump()
 
 
+@mcp.tool()
+def clarification_tool(user_input):
+    tool_name = "clarification_tool"
 
+    prompt = ChatPromptTemplate.from_template(
+        """
+                You are a STRICT input validation agent.
+
+                Your job is to determine if the user's request has ALL required information.
+
+                -------------------------------------------------
+                REQUIREMENTS
+                -------------------------------------------------
+
+                job_search:
+                - MUST include a clear job role (e.g., "AI Engineer", "Data Scientist")
+
+                email:
+                - MUST include a valid email address (contains "@")
+
+                -------------------------------------------------
+                STRICT RULES
+                -------------------------------------------------
+
+                - If job role is vague or missing (e.g., "search for me", "find job"):
+                → you MUST ask for job role
+
+                - If user mentions email/send but no email address:
+                → you MUST ask for email
+
+                - DO NOT assume anything
+                - BE STRICT (better ask than assume)
+
+                -------------------------------------------------
+                OUTPUT FORMAT (STRICT JSON)
+                -------------------------------------------------
+
+                If missing:
+                {
+                "ready": false,
+                "questions": ["question1"]
+                }
+
+                If complete:
+                {
+                "ready": true,
+                "questions": []
+                }
+
+                -------------------------------------------------
+                EXAMPLES
+                -------------------------------------------------
+
+                User: "search for me"
+                → missing job role
+
+                User: "find AI job"
+                → ready
+
+                User: "send to email"
+                → missing email
+
+                User: "find AI job and send to abc@gmail.com"
+                → ready
+
+                -------------------------------------------------
+                USER INPUT
+                -------------------------------------------------
+                {user_input}
+                """
+    )
+
+    try:
+        chain = prompt | llm
+
+        response = chain.invoke({
+            "user_input": user_input
+        })
+
+        logger.info(response.content)
+
+        result = MCPToolResult(
+            success=True,
+            tool_name=tool_name,
+            result={
+                "answer": response.content.strip(),
+                "suggestions": []
+            },
+            message="QA response generated successfully"
+        )
+
+        return result.model_dump()
+
+    except Exception as e:
+        return MCPToolResult(
+            success=False,
+            tool_name=tool_name,
+            result={
+                "ready": True,
+                "questions": []
+            },
+            error=str(e),
+            message="Clarification failed, defaulting to ready"
+        ).model_dump()
 # ============================================================================
 # Server Entry Point
 # ============================================================================

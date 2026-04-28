@@ -87,6 +87,8 @@ class ResumeAgent(BaseAgent):
                 .get("answer", "")
             )
 
+            logger.info(f"resume final result: {final_answer}")
+
             # -------------------------------
             # 5. RETURN STANDARD FORMAT
             # -------------------------------
