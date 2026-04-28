@@ -1051,16 +1051,8 @@ def summarize_tool(context: str, question: str) -> dict:
 # ============================================================================
 # Tool 9: planner tool (LLM)
 # ============================================================================
-import json
-import logging
-from pydantic import BaseModel
-from typing import List, Dict, Any, Optional
-
-logger = logging.getLogger(__name__)
-
-
 @mcp.tool()
-def planner_tool(user_input, available_agents ):
+def planner_tool(user_input, available_agents):
     tool_name = "planner_tool"
 
     prompt = ChatPromptTemplate.from_template(
@@ -1080,29 +1072,30 @@ def planner_tool(user_input, available_agents ):
 
     {available_agents}
 
-    -------------------------------------------------
-    AGENT RULES
-    -------------------------------------------------
-
     resume_agent:
     - Use for personal information / profile / resume
     - Params:
-    - {user_input}
-    - top_k
+      - user_input
+      - top_k
 
     job_search_agent:
     - Use for job search / job listings
     - Params:
-    - user_input
-    - location
-    - per_page
-    - page
+      - user_input
+      - location
+      - per_page
+      - page
 
     email_agent:
     - Use for sending emails / forwarding
     - Params:
-    - context
-    - user_email
+      - context
+      - recipient
+
+    qa_agent:
+    - Use for general questions, unclear intent, or unsupported requests
+    - Params:
+      - user_input
 
     -------------------------------------------------
     STRICT RULES
@@ -1113,13 +1106,16 @@ def planner_tool(user_input, available_agents ):
     3. ONLY extract values from user input
     4. If missing value → set null
     5. ALWAYS preserve execution order logically:
-    - fetch data first
-    - email last if needed
+       - fetch data first
+       - email last if needed
     6. top_k always 5
     7. DO NOT use:
-    - use_previous_output
-    - context chaining
-    - dependencies between steps
+       - use_previous_output
+       - context chaining
+       - dependencies between steps
+    8. If the user request does NOT clearly match any agent:
+       - You MUST use qa_agent
+       - NEVER return empty steps
 
     Each step must be INDEPENDENT.
 
@@ -1128,120 +1124,78 @@ def planner_tool(user_input, available_agents ):
     -------------------------------------------------
 
     {{
-    "steps": [
-        {{
-        "agent": "agent_name",
-        "params": {{
-            "key": "value"
-        }}
-        }}
-    ]
+        "steps": [
+            {{
+                "agent": "agent_name",
+                "params": {{
+                    "key": "value"
+                }}
+            }}
+        ]
     }}
 
     -------------------------------------------------
-    EXAMPLE 1
+    EXAMPLES
     -------------------------------------------------
 
     User:
-    Send John Smith personal information to john@gmail.com
+    What is machine learning?
 
     Output:
     {{
-    "steps": [
-        {{
-        "agent": "resume_agent",
-        "params": {{
-            "user_input": {user_input},
-            "top_k": 5
-        }}
-        }},
-        {{
-        "agent": "email_agent",
-        "params": {{
-            "recipient": "john@gmail.com",
-            "context": "John Smith personal information"
-        }}
-        }}
-    ]
+        "steps": [
+            {{
+                "agent": "qa_agent",
+                "params": {{
+                    "user_input": "What is machine learning?"
+                }}
+            }}
+        ]
     }}
-
-    -------------------------------------------------
-    EXAMPLE 2
-    -------------------------------------------------
 
     User:
-    Search me a job about AI Engineer in Malaysia
+    Find me an AI Engineer job in Malaysia
 
     Output:
     {{
-    "steps": [
-        {{
-        "agent": "job_search_agent",
-        "params": {{
-            "user_input": "AI Engineer",
-            "location": "Malaysia",
-            "per_page": 1,
-            "page": 1
-        }}
-        }}
-    ]
+        "steps": [
+            {{
+                "agent": "job_search_agent",
+                "params": {{
+                    "user_input": "AI Engineer",
+                    "location": "Malaysia",
+                    "per_page": 1,
+                    "page": 1
+                }}
+            }}
+        ]
     }}
-
-    -------------------------------------------------
-    EXAMPLE 3
-    -------------------------------------------------
 
     User:
-    Find me one AI Engineer job and send it to smartqingtong@gmail.com
+    Find AI jobs and send to john@gmail.com
 
     Output:
     {{
-    "steps": [
-        {{
-        "agent": "job_search_agent",
-        "params": {{
-            "user_input": "AI Engineer",
-            "location": "Malaysia",
-            "per_page": 1,
-            "page": 1
-        }}
-        }},
-        {{
-        "agent": "email_agent",
-        "params": {{
-            "recipient": "smartqingtong@gmail.com",
-            "context": "AI Engineer job information"
-        }}
-        }}
-    ]
+        "steps": [
+            {{
+                "agent": "job_search_agent",
+                "params": {{
+                    "user_input": "AI Engineer",
+                    "location": null,
+                    "per_page": 1,
+                    "page": 1
+                }}
+            }},
+            {{
+                "agent": "email_agent",
+                "params": {{
+                    "recipient": "john@gmail.com",
+                    "context": "AI job information"
+                }}
+            }}
+        ]
     }}
 
-    -------------------------------------------------
-    EXAMPLE 4
-    -------------------------------------------------
-
-    User:
-    Find John Smith profile and send it to john@gmail.com
-
-    Output:
-    {{
-    "steps": [
-        {{
-        "agent": "resume_agent",
-        "params": {{
-            "user_input": "John Smith",
-            "top_k": 5
-        }}
-        }},
-        {{
-        "agent": "email_agent",
-        "params": {{
-            "recipient": "john@gmail.com",
-            "context": "John Smith personal information"
-        }}
-        }}
-    ]
-    }}
     -------------------------------------------------
     USER INPUT
     -------------------------------------------------
@@ -1260,18 +1214,41 @@ def planner_tool(user_input, available_agents ):
 
         logger.info(response.content)
 
-        parsed = json.loads(response.content)
+        # ✅ Safe parsing with fallback
+        try:
+            parsed = json.loads(response.content)
+            steps = parsed.get("steps", [])
+
+            # If LLM returns empty → fallback to qa_agent
+            if not steps:
+                steps = [
+                    {
+                        "agent": "qa_agent",
+                        "params": {
+                            "user_input": user_input
+                        }
+                    }
+                ]
+
+        except Exception:
+            # Hard fallback if JSON fails
+            steps = [
+                {
+                    "agent": "qa_agent",
+                    "params": {
+                        "user_input": user_input
+                    }
+                }
+            ]
 
         result = MCPToolResult(
             success=True,
             tool_name=tool_name,
             result={
-                "steps": parsed["steps"]
+                "steps": steps
             },
             message="Execution plan created successfully"
         )
-
-        logger.info(result)
 
         return result.model_dump()
 
@@ -1287,8 +1264,121 @@ def planner_tool(user_input, available_agents ):
         ).model_dump()
 
 
+@mcp.tool()
+def qa_tool(user_input, available_agents):
+    tool_name = "qa_tool"
 
-    
+    prompt = ChatPromptTemplate.from_template(
+        """
+        You are an AI Career Copilot assistant.
+
+        Your role is to help users understand what they can do in this system and guide them to the right action.
+
+        You DO NOT execute tools. You ONLY:
+        - Answer questions
+        - Suggest the best next action
+        - Recommend relevant agents/tools
+
+        ---
+
+        Available agents/tools:
+        {available_agents}
+
+        ---
+
+        Your responsibilities:
+
+        1. Understand the user's intent
+        2. If the question is general → answer clearly
+        3. If the user might benefit from a tool → recommend it
+        4. If the user is unclear → guide them with options
+
+        ---
+
+        Guidelines:
+
+        - Be concise and helpful
+        - Always guide the user toward actions when possible
+        - Suggest tools naturally (not robotic)
+        - Do NOT mention "system", "tools", or "agents" explicitly
+        - Do NOT hallucinate features outside available_agents
+
+        ---
+
+        Response style:
+
+        - First: Answer or acknowledge the question
+        - Then: Suggest what the user can do next
+        - Optionally: Give 2–3 clear suggestions
+
+        ---
+
+        Examples:
+
+        User: "I don't know what to do"
+        Response:
+        "I'm here to help with your career. You can ask me to review your resume, find job matches, or identify missing skills. What would you like to start with?"
+
+        User: "How can I improve my resume?"
+        Response:
+        "You can improve your resume by tailoring it to specific roles, highlighting impact, and using clear formatting.
+
+        I can also review your resume and suggest improvements if you'd like."
+
+        User: "Find me a job"
+        Response:
+        "I can help you find jobs that match your profile.
+
+        Would you like me to search for roles based on your resume?"
+
+        ---
+
+        User input:
+        {user_input}
+
+        Your response:
+        """
+        )
+
+    try:
+        chain = prompt | llm
+
+        response = chain.invoke({
+            "user_input": user_input,
+            "available_agents": available_agents
+        })
+
+        logger.info(response.content)
+        
+        parsed = json.loads(response.content)
+
+        parsed = {
+            "answer": response.content,
+            "suggestions": []
+        }
+
+        result = MCPToolResult(
+            success=True,
+            tool_name=tool_name,
+            result={
+                "answer": parsed.get("answer", ""),
+                "suggestions": parsed.get("suggestions", [])
+            },
+            message="QA response generated successfully"
+        )
+
+        return result.model_dump()
+
+    except Exception as e:
+        logger.exception("QA tool failed")
+
+        return MCPToolResult(
+            success=False,
+            tool_name=tool_name,
+            result={},
+            error=str(e),
+            message="Failed to generate QA response"
+        ).model_dump()
 
 
 

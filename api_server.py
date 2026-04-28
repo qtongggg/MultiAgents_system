@@ -175,6 +175,17 @@ planner_agent = PlannerAgentClass(AgentInfo(
 )
 
 registry.register('planner_agent', planner_agent)
+
+
+from Agents.qa_agent import QaAgent as QaAgentClass
+
+qa_agent = QaAgentClass(AgentInfo(
+    name = "qa_agent",
+    description= "an agent that help user to know their questions "),
+    registry
+)
+
+registry.register('qa_agent', qa_agent)
 # =========================================================
 # API ROUTES (NOW CLEAN)
 # =========================================================

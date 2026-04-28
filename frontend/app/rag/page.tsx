@@ -1,86 +1,71 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import RagQueryForm from "@/components/RagQueryForm";
+import { useState, useRef, useEffect } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { ArrowRight } from "lucide-react";
 import { askRagQuestion } from "@/lib/api";
 import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
-import { motion } from "framer-motion";
 
-// -------------------------
-// TYPES
-// -------------------------
 type Job = {
   title: string;
   company: string;
   location: string;
-  link?: string;
   fit_score?: number;
-  missing_skills?: string[];
+  reason?: string;
   matching_skills?: string[];
+  missing_skills?: string[];
+  link?: string;
 };
 
-type BaseMessage = {
-  role: "user" | "assistant";
-};
+type Message =
+  | { role: "user"; type: "text"; content: string }
+  | { role: "assistant"; type: "text"; content: string }
+  | { role: "assistant"; type: "jobs"; jobs: Job[] };
 
-type TextMessage = BaseMessage & {
-  type: "text";
-  content: string;
-};
-
-type JobsMessage = BaseMessage & {
-  role: "assistant";
-  type: "jobs";
-  jobs: Job[];
-};
-
-type FileMessage = BaseMessage & {
-  type: "file";
-  fileName: string;
-  fileUrl?: string;
-};
-
-type Message = TextMessage | JobsMessage | FileMessage;
-
-// -------------------------
-// COMPONENT
-// -------------------------
-export default function RagPage() {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      role: "assistant",
-      type: "text",
-      content: "Hello! Upload a PDF, then ask me anything about its content.",
-    },
-  ]);
-
+export default function RagLandingPage() {
+  const [input, setInput] = useState("");
+  const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
-  // Auto scroll
+  const bottomRef = useRef<HTMLDivElement | null>(null);
+
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
-  // -------------------------
-  // SEND MESSAGE
-  // -------------------------
+  // 🔥 Suggestion Cards
+  const suggestionCards = [
+    {
+      title: "📄 Review my resume",
+      description: "Get feedback and improve your CV",
+      prompt: "Can you review my resume and suggest improvements?",
+    },
+    {
+      title: "🔍 Find matching jobs",
+      description: "Based on your skills and experience",
+      prompt: "Find jobs that match my resume",
+    },
+    {
+      title: "🧠 Missing skills",
+      description: "Identify skill gaps for your target role",
+      prompt: "What skills are missing in my CV?",
+    },
+    {
+      title: "📧 Send jobs to email",
+      description: "Receive job recommendations via email",
+      prompt: "Find jobs and send them to my email",
+    },
+  ];
 
   async function handleSend(question: string) {
-    const userMessage: TextMessage = {
-      role: "user",
-      type: "text",
-      content: question,
-    };
+    if (!question.trim()) return;
 
-    setMessages((prev) => [...prev, userMessage]);
+    setMessages((prev) => [
+      ...prev,
+      { role: "user", type: "text", content: question },
+    ]);
+
     setLoading(true);
-    setError("");
 
     try {
       const response = await askRagQuestion(question, 5);
@@ -89,320 +74,275 @@ export default function RagPage() {
       const answer = response?.data?.answer ?? "";
 
       if (jobs.length > 0) {
-        const assistantMessage: JobsMessage = {
-          role: "assistant",
-          type: "jobs",
-          jobs: jobs,
-        };
-
-        setMessages((prev) => [...prev, assistantMessage]);
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", type: "jobs", jobs },
+        ]);
+        setLoading(false);
       } else {
-        const assistantMessage: TextMessage = {
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", type: "text", content: "" },
+        ]);
+
+        const words = answer.split(" ");
+        let i = 0;
+
+        const interval = setInterval(() => {
+          i++;
+
+          setMessages((prev) => {
+            const last = prev[prev.length - 1];
+            if (!last || last.type !== "text") return prev;
+
+            const updated = [...prev];
+            updated[updated.length - 1] = {
+              ...last,
+              content: words.slice(0, i).join(" "),
+            };
+
+            return updated;
+          });
+
+          if (i >= words.length) {
+            clearInterval(interval);
+            setLoading(false);
+          }
+        }, 40);
+      }
+    } catch {
+      setMessages((prev) => [
+        ...prev,
+        {
           role: "assistant",
           type: "text",
-          content: answer || "No answer returned.",
-        };
-
-        setMessages((prev) => [...prev, assistantMessage]);
-      }
-    } catch (err) {
-      const errorMessage: TextMessage = {
-        role: "assistant",
-        type: "text",
-        content:
-          err instanceof Error
-            ? err.message
-            : "Something went wrong.",
-      };
-
-      setMessages((prev) => [...prev, errorMessage]);
-      setError("Failed to get response.");
-    } finally {
+          content: "Something went wrong.",
+        },
+      ]);
       setLoading(false);
     }
   }
 
-
-
-  // -------------------------
-  // FILE HANDLING
-  // -------------------------
-  function handleUploadStart(fileName: string) {
-    setMessages((prev) => [
-      ...prev,
-      { role: "user", type: "file", fileName },
-      {
-        role: "assistant",
-        type: "text",
-        content: `Uploading ${fileName}...`,
-      },
-    ]);
-  }
-
-  function handleUploadSuccess(fileName: string, fileUrl: string) {
-    setMessages((prev) =>
-      prev.map((msg) => {
-        if (msg.type === "file" && !msg.fileUrl) {
-          return { ...msg, fileUrl };
-        }
-
-        if (
-          msg.type === "text" &&
-          msg.content.startsWith("Uploading ")
-        ) {
-          return {
-            ...msg,
-            content: `Uploaded ${fileName}. You can now ask questions about it.`,
-          };
-        }
-
-        return msg;
-      })
-    );
-  }
-
-  function handleUploadError(fileName: string) {
-    setMessages((prev) =>
-      prev.map((msg) => {
-        if (msg.type === "file" && !msg.fileUrl) {
-          return {
-            ...msg,
-            fileName: `${fileName} (upload failed)`,
-          };
-        }
-
-        if (
-          msg.type === "text" &&
-          msg.content.startsWith("Uploading ")
-        ) {
-          return {
-            ...msg,
-            content: `Failed to upload ${fileName}. Please try again.`,
-          };
-        }
-
-        return msg;
-      })
-    );
-  }
-
-  // -------------------------
-  // RENDER
-  // -------------------------
   return (
-    <main className="min-h-screen bg-[#F3F3F3] text-[#2B2B2B]">
-      <div className="mx-auto flex h-screen max-w-6xl gap-6 p-6">
-        <section className="flex flex-1 flex-col rounded-[32px] border bg-white shadow-sm">
-          
-          {/* Header */}
-          <div className="border-b px-6 py-5">
-            <h2 className="text-xl font-semibold">Document Chat</h2>
-            <p className="text-sm text-gray-500">
-              Ask questions about your uploaded PDF
-            </p>
-          </div>
+    <main className="flex flex-col h-screen bg-[#f5f5f5] text-gray-900">
 
-          {/* Messages */}
-          <div className="flex-1 overflow-y-auto px-6 py-6 space-y-4">
-            {messages.map((msg, index) => (
-              <motion.div
-                key={index}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                className={`flex ${
-                  msg.role === "user" ? "justify-end" : "justify-start"
-                }`}
-              >
-                <div
-                  className={`max-w-[75%] px-4 py-3 rounded-2xl text-sm shadow ${
-                    msg.role === "user"
-                      ? "bg-black text-white"
-                      : "bg-white border"
+      {/* Header */}
+      <div className="text-center pt-8 px-6">
+        <motion.h1
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="text-3xl font-semibold"
+        >
+          AI Career Copilot
+        </motion.h1>
+
+        <p className="mt-2 text-gray-500">
+          Ask anything about your resume or job search
+        </p>
+      </div>
+
+      {/* Chat Area */}
+      <div className="flex-1 overflow-y-auto px-6 mt-6 pb-28">
+        <div className="max-w-5xl mx-auto space-y-6">
+
+          {/* 🔥 EMPTY STATE (Homepage UI) */}
+          {messages.length === 0 && (
+            <div className="flex flex-col items-center justify-center mt-20 text-center">
+              <h2 className="text-2xl font-semibold text-gray-800">
+                What can I help you with?
+              </h2>
+
+              <p className="text-gray-500 mt-2 mb-6">
+                Try one of the suggestions below
+              </p>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full max-w-3xl">
+                {suggestionCards.map((card, i) => (
+                  <motion.div
+                    key={i}
+                    whileHover={{ scale: 1.03, y: -4 }}
+                    onClick={() => {
+                      setInput(card.prompt);
+                      handleSend(card.prompt);
+                    }}
+                    className="cursor-pointer rounded-xl border border-gray-200 bg-white p-4 text-left shadow-sm hover:shadow-md transition"
+                  >
+                    <p className="font-medium text-gray-900">{card.title}</p>
+                    <p className="text-sm text-gray-500 mt-1">
+                      {card.description}
+                    </p>
+                  </motion.div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 🔥 CHAT */}
+          {messages.length > 0 && (
+            <AnimatePresence>
+              {messages.map((msg, i) => (
+                <motion.div
+                  key={i}
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className={`flex ${
+                    msg.role === "user" ? "justify-end" : "justify-start"
                   }`}
                 >
-                  {/* FILE */}
-                  {msg.type === "file" && (
-                    <button
-                      disabled={!msg.fileUrl}
-                      onClick={() =>
-                        msg.fileUrl && setPreviewUrl(msg.fileUrl)
-                      }
-                    >
-                      📄 {msg.fileName}
-                    </button>
+                  {/* TEXT */}
+                  {msg.type === "text" && (
+                    <div className="max-w-3xl">
+                      <div
+                        className={`inline-block px-4 py-2 rounded-2xl ${
+                          msg.role === "user"
+                            ? "bg-gray-900 text-white ml-auto"
+                            : "text-gray-800"
+                        }`}
+                      >
+                        <div className="prose max-w-none">
+                          <ReactMarkdown>{msg.content}</ReactMarkdown>
+                        </div>
+                      </div>
+                    </div>
                   )}
 
                   {/* JOBS */}
                   {msg.type === "jobs" && (
-                    <div className="space-y-4">
-                      <p className="text-xs text-gray-500">
-                        Found {msg.jobs.length} jobs
-                      </p>
-
-                      {msg.jobs.map((job, i) => (
-                        <div
-                          key={i}
-                          className="border rounded-xl p-4 hover:shadow-md transition"
+                    <div className="space-y-4 w-full">
+                      {msg.jobs.map((job, j) => (
+                        <motion.div
+                          key={j}
+                          whileHover={{ scale: 1.02, y: -4 }}
+                          className="rounded-xl p-4 bg-white border border-gray-200 space-y-3"
                         >
-                          <p className="font-semibold">{job.title}</p>
-                          <p className="text-xs text-gray-500">
-                            {job.company} • {job.location}
-                          </p>
-
-                          {job.fit_score !== undefined && (
-                            <div className="mt-2">
-                              <div className="h-2 bg-gray-200 rounded-full">
-                                <div
-                                  className="h-2 bg-green-500 rounded-full"
-                                  style={{
-                                    width: `${Math.round(
-                                      job.fit_score * 100
-                                    )}%`,
-                                  }}
-                                />
-                              </div>
-                              <p className="text-xs mt-1">
-                                Match:{" "}
-                                {Math.round(job.fit_score * 100)}%
+                          {/* Header */}
+                          <div className="flex justify-between">
+                            <div>
+                              <p className="font-semibold">{job.title}</p>
+                              <p className="text-sm text-gray-500">
+                                {job.company} • {job.location}
                               </p>
                             </div>
+
+                            {job.link && (
+                              <a
+                                href={job.link}
+                                target="_blank"
+                                className="text-sm px-3 py-1 rounded-full bg-gray-900 text-white hover:bg-gray-700"
+                              >
+                                Apply
+                              </a>
+                            )}
+                          </div>
+
+                          {/* Reason */}
+                          {job.reason && (
+                            <p className="text-sm text-gray-600">
+                              {job.reason}
+                            </p>
                           )}
 
-                          {job.matching_skills && job.matching_skills.length > 0 && (
-                            <div className="mt-2">
-                              <p className="text-xs text-gray-500">Matching Skills:</p>
-                              <ul className="text-xs list-disc list-inside">
-                                {job.matching_skills.map((skill, i) => (
-                                  <li key={i}>{skill}</li>
+                          {/* Matching Skills */}
+                          {job.matching_skills && (
+                            <div>
+                              <p className="text-xs text-gray-500 mb-1">
+                                Matching Skills
+                              </p>
+                              <div className="flex flex-wrap gap-2">
+                                {job.matching_skills.map((s, i) => (
+                                  <span
+                                    key={i}
+                                    className="text-xs px-2 py-1 bg-green-100 text-green-700 rounded-full"
+                                  >
+                                    {s}
+                                  </span>
                                 ))}
-                              </ul>
+                              </div>
                             </div>
                           )}
 
-                          {job.missing_skills && job.missing_skills.length > 0 && (
-                            <div className="mt-2">
-                              <p className="text-xs text-red-500">Missing Skills:</p>
-                              <ul className="text-xs list-disc list-inside">
-                                {job.missing_skills.map((skill, i) => (
-                                  <li key={i}>{skill}</li>
+                          {/* Missing Skills */}
+                          {job.missing_skills && (
+                            <div>
+                              <p className="text-xs text-gray-500 mb-1">
+                                Missing Skills
+                              </p>
+                              <div className="flex flex-wrap gap-2">
+                                {job.missing_skills.map((s, i) => (
+                                  <span
+                                    key={i}
+                                    className="text-xs px-2 py-1 bg-gray-200 text-gray-600 rounded-full"
+                                  >
+                                    {s}
+                                  </span>
                                 ))}
-                              </ul>
+                              </div>
                             </div>
                           )}
 
-                          {job.link && (
-                            <a
-                              href={job.link}
-                              target="_blank"
-                              className="text-xs text-blue-600 mt-2 inline-block"
-                            >
-                              View Job →
-                            </a>
+                          {/* Score */}
+                          {job.fit_score !== undefined && (
+                            <div>
+                              <p className="text-xs text-gray-600 mb-1">
+                                Match: {Math.round(job.fit_score * 100)}%
+                              </p>
+                              <div className="h-2 bg-gray-200 rounded-full">
+                                <motion.div
+                                  initial={{ width: 0 }}
+                                  animate={{
+                                    width: `${job.fit_score * 100}%`,
+                                  }}
+                                  className="h-full bg-gray-900"
+                                />
+                              </div>
+                            </div>
                           )}
-                        </div>
+                        </motion.div>
                       ))}
                     </div>
                   )}
+                </motion.div>
+              ))}
+            </AnimatePresence>
+          )}
 
-                  {/* TEXT */}
-                  {msg.type === "text" && (
-                    <ReactMarkdown
-                      remarkPlugins={[remarkGfm]}
-                      components={{
-                        p: ({ children }) => (
-                          <p className="mb-2">{children}</p>
-                        ),
-                        code({
-                          inline,
-                          className,
-                          children,
-                          ...props
-                        }) {
-                          const match =
-                            /language-(\w+)/.exec(className || "");
+          {/* Loader */}
+          {loading && (
+            <div className="flex gap-1">
+              {[0, 1, 2].map((i) => (
+                <motion.span
+                  key={i}
+                  className="w-2 h-2 bg-gray-400 rounded-full"
+                  animate={{ y: [0, -6, 0] }}
+                  transition={{ duration: 0.6, repeat: Infinity, delay: i * 0.2 }}
+                />
+              ))}
+            </div>
+          )}
 
-                          if (!inline && match) {
-                            return (
-                              <div className="relative">
-                                <button
-                                  onClick={() =>
-                                    navigator.clipboard.writeText(
-                                      String(children)
-                                    )
-                                  }
-                                  className="absolute right-2 top-2 bg-gray-700 text-white px-2 py-1 text-xs rounded"
-                                >
-                                  Copy
-                                </button>
-
-                                <SyntaxHighlighter
-                                  style={oneDark}
-                                  language={match[1]}
-                                  PreTag="div"
-                                  {...props}
-                                >
-                                  {String(children).replace(/\n$/, "")}
-                                </SyntaxHighlighter>
-                              </div>
-                            );
-                          }
-
-                          return (
-                            <code className="bg-gray-200 px-1 rounded">
-                              {children}
-                            </code>
-                          );
-                        },
-                      }}
-                    >
-                      {msg.content}
-                    </ReactMarkdown>
-                  )}
-                </div>
-              </motion.div>
-            ))}
-
-            {/* Loading */}
-            {loading && (
-              <div className="flex">
-                <div className="flex gap-1">
-                  <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" />
-                  <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-150" />
-                  <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-300" />
-                </div>
-              </div>
-            )}
-
-            <div ref={messagesEndRef} />
-          </div>
-
-          {/* Input */}
-          <div className="border-t px-6 py-4">
-            <RagQueryForm
-              onSend={handleSend}
-              loading={loading}
-              onUploadStart={handleUploadStart}
-              onUploadSuccess={handleUploadSuccess}
-              onUploadError={handleUploadError}
-            />
-            {error && (
-              <p className="text-red-500 text-sm mt-2">{error}</p>
-            )}
-          </div>
-        </section>
+          <div ref={bottomRef} />
+        </div>
       </div>
 
-      {/* PDF Preview */}
-      {previewUrl && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center">
-          <div className="w-[90%] h-[90%] bg-white rounded-xl">
-            <button onClick={() => setPreviewUrl(null)}>
-              Close
-            </button>
-            <iframe src={previewUrl} className="w-full h-full" />
-          </div>
+      {/* Input */}
+      <div className="fixed bottom-4 left-1/2 -translate-x-1/2 w-full max-w-2xl px-4">
+        <div className="flex items-center gap-2 rounded-full border bg-white px-3 py-2 shadow-sm">
+          <input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            className="flex-1 outline-none text-sm"
+          />
+          <button
+            onClick={() => {
+              handleSend(input);
+              setInput("");
+            }}
+            className="p-2 bg-gray-900 text-white rounded-full"
+          >
+            <ArrowRight size={16} />
+          </button>
         </div>
-      )}
+      </div>
     </main>
   );
 }
