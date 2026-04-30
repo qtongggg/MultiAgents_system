@@ -158,60 +158,99 @@ def ensure_hybrid_collection() -> None:
 # Semantic-only search (existing style)
 # -------------------------------------------------------------------
 
-def search_resume(question: str, top_k: int, candidate_name: str | None = None) -> list[dict]:
+def search_resume_function(
+    question: str,
+    top_k: int,
+    candidate_name: str | None = None
+) -> dict:
+
     dense_query = embed_dense(question)
     sparse_indices, sparse_values = embed_sparse(question)
 
+    query_filter = None
+
     if candidate_name:
-        target_source_id = candidate_name + "_resume.pdf" 
+        normalized = candidate_name.strip().lower()
 
+        query_filter = models.Filter(
+            must=[
+                models.FieldCondition(
+                    key="candidate_name",
+                    match=models.MatchValue(value=normalized)
+                )
+            ]
+        )
 
-
+    # -----------------------------
+    # RETRIEVAL
+    # -----------------------------
     response = qdrant_client.query_points(
         collection_name=RESUME_COLLECTION_HYBRID,
         prefetch=[
             models.Prefetch(
                 query=dense_query,
-                using="dense"
+                using="dense",
+                limit=top_k * 5
             ),
             models.Prefetch(
                 query=models.SparseVector(
                     indices=sparse_indices,
                     values=sparse_values,
                 ),
-                using="sparse"
+                using="sparse",
+                limit=top_k * 5
             ),
         ],
         query=models.FusionQuery(fusion=models.Fusion.RRF),
+        limit=top_k * 5,
         with_payload=True,
         with_vectors=False,
-        query_filter=models.Filter(
-            must=[
-                models.FieldCondition(
-                    key="source_id",
-                    match=models.MatchValue(value=target_source_id)
-                )
-            ]
-        ) if candidate_name else None,
+        query_filter=query_filter,
     )
 
-    payloads: list[dict[str, Any]] = []
-    scores: list[float] = []
+    payloads = []
+    scores = []
 
     for point in response.points:
         payload = dict(point.payload or {})
         payloads.append(payload)
-        scores.append(float(point.score) if point.score is not None else 0.0)
+        scores.append(float(point.score or 0.0))
+
+    # -----------------------------
+    # EMPTY CHECK
+    # -----------------------------
+    if not payloads:
+        return {
+            "chunks": [],
+            "count": 0
+        }
 
     search_results = {
         "payloads": payloads,
         "scores": scores,
     }
 
+    # -----------------------------
+    # RERANK QUERY (FIXED)
+    # -----------------------------
+    rerank_query = question
+    if candidate_name:
+        rerank_query = f"{question} (Candidate: {candidate_name})"
 
-    result = rerank_results(question, search_results, top_k)
-    
-    return result
+    reranked = rerank_results(rerank_query, search_results, top_k)
+
+    # -----------------------------
+    # FINAL OUTPUT
+    # -----------------------------
+    if reranked and len(reranked) > 0:
+        final_chunks = reranked
+    else:
+        final_chunks = payloads[:top_k]
+
+    return {
+        "chunks": final_chunks,
+        "count": len(final_chunks)
+    }
 
 # -------------------------------------------------------------------
 # Hybrid search for jobs

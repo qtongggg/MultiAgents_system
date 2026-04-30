@@ -123,16 +123,7 @@ class RagQueryRequest(BaseModel):
 # UTIL
 # =========================================================
 def normalize_resume_filename(filename: str) -> str:
-    ext = Path(filename).suffix.lower() or ".pdf"
-    stem = Path(filename).stem.lower()
-
-    stem = re.sub(r"[^a-z0-9\s_-]", "", stem)
-    stem = re.sub(r"\s+", " ", stem).strip()
-
-    if "resume" not in stem:
-        stem = f"{stem} resume"
-
-    return f"{stem.replace(' ', '_')}{ext}"
+    return filename.strip().lower().replace(" ", "_")
 
 
 # =========================================================
@@ -199,23 +190,29 @@ registry.register('clarification_agent', clarification_agent)
 # API ROUTES (NOW CLEAN)
 # =========================================================
 
+import traceback
+
 @app.post("/api/rag/upload")
 async def upload_pdf(file: UploadFile = File(...)):
     try:
-        file_path = UPLOAD_DIR / normalize_resume_filename(file.filename)
+        file_path = UPLOAD_DIR / file.filename
 
         with open(file_path, "wb") as f:
             f.write(await file.read())
 
         result = ingest_pdf_hybrid(str(file_path), file_path.name)
-
+        
+        print(file_path.name)
         return {
             "message": "Uploaded + ingested",
-            "file": file_path.name,
+            "file": file.filename,
             "result": result
         }
 
     except Exception as e:
+        print("🔥 FULL ERROR TRACE:")
+        traceback.print_exc()
+
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/jobs/search")

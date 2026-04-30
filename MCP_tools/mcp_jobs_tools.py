@@ -8,7 +8,7 @@ import os
 
 from qdrant_client import QdrantClient, models
 from typing import Any
-from tools.data_loader import search_jobs_from_qd, embed_dense, rerank_results, embed_sparse, hybrid_search_jobs
+from tools.data_loader import search_resume_function
 from tools.job_searcher import search_jobs, clean_job_results
 from tools.job_cleanning_chunk import ingest_jobs_to_qdrant, make_cache_key, make_job_id
 from qdrant_client import QdrantClient
@@ -782,6 +782,8 @@ def search_resume(
 
     state = make_agent_state()
 
+    candidate_name = candidate_name.lower()
+
     state.update({
         "tool": "search_resume",
         "intent": "resume",
@@ -791,143 +793,22 @@ def search_resume(
     })
 
     try:
-        # -----------------------------
-        # EMBEDDINGS
-        # -----------------------------
-        dense_query = embed_dense(question)
-        sparse_indices, sparse_values = embed_sparse(question)
-
-        # -----------------------------
-        # FILTER
-        # -----------------------------
-        query_filter = None
-        target_source_id = None
-
-        if candidate_name:
-            normalized = candidate_name.strip().lower().replace(" ", "_")
-            target_source_id = f"{normalized}_resume.pdf"
-
-            logger.info(f"[search_resume] filter source_id = {target_source_id}")
-
-            query_filter = models.Filter(
-                must=[
-                    models.FieldCondition(
-                        key="source_id",
-                        match=models.MatchValue(value=target_source_id)
-                    )
-                ]
-            )
-
-        # -----------------------------
-        # QUERY QDRANT
-        # -----------------------------
-        response = get_qdrant().query_points(
-            collection_name=RESUME_COLLECTION_HYBRID,
-            prefetch=[
-                models.Prefetch(query=dense_query, using="dense"),
-                models.Prefetch(
-                    query=models.SparseVector(
-                        indices=sparse_indices,
-                        values=sparse_values,
-                    ),
-                    using="sparse"
-                ),
-            ],
-            query=models.FusionQuery(fusion=models.Fusion.RRF),
-            limit=top_k,
-            with_payload=True,
-            with_vectors=False,
-            query_filter=query_filter,
+        result = search_resume_function(
+            question=question,
+            top_k=top_k,
+            candidate_name=candidate_name
         )
-
-        logger.info(f"[search_resume] points returned = {len(response.points)}")
-
-        chunks = []
-        scores = []
-
-        for point in response.points:
-            payload = point.payload or {}
-
-            text = payload.get("text", "")
-            source_id = payload.get("source_id", "")
-
-            chunks.append({
-                "text": text,
-                "source_id": source_id,
-            })
-
-            scores.append(float(point.score or 0.0))
-
-        # -----------------------------
-        # FALLBACK (remove filter if empty)
-        # -----------------------------
-        if not chunks and query_filter is not None:
-            logger.warning("[search_resume] filter returned 0 results → retrying without filter")
-
-            response = get_qdrant().query_points(
-                collection_name=RESUME_COLLECTION_HYBRID,
-                prefetch=[
-                    models.Prefetch(query=dense_query, using="dense"),
-                    models.Prefetch(
-                        query=models.SparseVector(
-                            indices=sparse_indices,
-                            values=sparse_values,
-                        ),
-                        using="sparse"
-                    ),
-                ],
-                query=models.FusionQuery(fusion=models.Fusion.RRF),
-                limit=top_k,
-                with_payload=True,
-                with_vectors=False,
-            )
-
-            chunks = []
-            scores = []
-
-            for point in response.points:
-                payload = point.payload or {}
-
-                chunks.append({
-                    "text": payload.get("text", ""),
-                    "source_id": payload.get("source_id", ""),
-                })
-
-                scores.append(float(point.score or 0.0))
-
-        # -----------------------------
-        # EMPTY RESULT
-        # -----------------------------
-        if not chunks:
-            return {
-                "ok": True,
-                "data": {"chunks": [], "count": 0},
-                "error": None,
-                "meta": {"message": "no resume chunks found"}
-            }
-
-        # -----------------------------
-        # RERANK
-        # -----------------------------
-        search_results = {
-            "payloads": chunks,
-            "scores": scores,
-        }
-
-        reranked = rerank_results(question, search_results, top_k)
-
-        if not reranked:
-            reranked = chunks[:top_k]
 
         return {
             "ok": True,
             "data": {
-                "chunks": reranked,
-                "count": len(reranked)
+                "chunks": result["chunks"],
+                "count": result["count"]
             },
             "error": None,
             "meta": {
                 "tool": "search_resume",
+                "message": result.get("message"),
                 "filtered": candidate_name is not None
             }
         }
@@ -966,39 +847,59 @@ def summarize_tool(context: str, question: str) -> dict:
             return state
 
         prompt = ChatPromptTemplate.from_template("""
-        You are a professional HR resume assistant.
+            You are a professional HR resume assistant.
 
-        Your task is to answer the question using ONLY the provided resume context.
-        
+            Your task is to extract accurate information from the resume context.
 
-        Rules:
-        - Use only the context provided
-        - Do not make up facts
-        - Do not mix details from multiple candidates
-        - If the candidate's identity is unclear, say that the retrieved context is ambiguous
-        - If a requested detail is missing, state that it is not available in the context
+            STRICT RULES:
+            - Use ONLY the provided context
+            - DO NOT hallucinate or invent information
+            - DO NOT assume anything not explicitly written
+            - Extract information even if it is not explicitly labeled
+            - NEVER say "ambiguous"
+            - NEVER mention uncertainty
 
-        Response Style Rules (VERY IMPORTANT):
-        - If the question is specific (e.g., projects, skills, experience), give a **direct and concise answer**
-        - If the question is broad (e.g., "summarize the candidate", "tell me about him"), give a **structured summary**
-        - Do NOT force full resume format unless necessary
-        - Keep answers clear, relevant, and easy to scan
+            EXTRACTION RULES:
 
-        Examples:
-        - Question: "What projects did he do?"
-        → Return only projects in bullet points
+            1. Phone Number Extraction:
+            - Identify phone numbers even if:
+            - They are under "Contact"
+            - They appear as bullet points
+            - They are not labeled as "Phone Number"
+            - Recognize Malaysian phone formats (e.g., 01X-XXXXXXX, +601XXXXXXXXX)
+            - Prefer numbers near keywords like:
+            - "Contact"
+            - "Phone"
+            - "Mobile"
+            - IGNORE numbers under:
+            - "References"
+            - Other people's names (e.g., supervisors, lecturers)
 
-        - Question: "Summarize this candidate"
-        → Return full structured format
+            2. Email Extraction:
+            - Extract any valid email address
+            - Prefer emails near "Contact" section
 
-        Context:
-        {context}
+            3. General Queries:
+            - If the question is broad (e.g., "show me info"):
+            → Return structured summary with all available fields
 
-        Question:
-        {question}
+            4. Missing Data Rule:
+            - If SOME relevant data exists → return it
+            - Only say "Not available in the provided resume context." if NOTHING is found
 
-        Answer:
-        """)
+            OUTPUT FORMAT:
+            - more natural, for example: "This is the phone number of Mah Qing Tong 0163960009"
+
+            ---
+
+            Context:
+            {context}
+
+            Question:
+            {question}
+
+            Answer:
+            """)
 
         chain = prompt | llm
         response = chain.invoke({
@@ -1054,6 +955,7 @@ def planner_tool(user_input, available_agents):
     - Params:
       - user_input
       - top_k
+      - candidate_name
 
     job_search_agent:
     - Use for job search / job listings
@@ -1081,7 +983,7 @@ def planner_tool(user_input, available_agents):
     1. ONLY use listed agents
     2. NEVER invent parameters or values
     3. ALWAYS pass the FULL original user input as "user_input". DO NOT shorten, summarize, or extract partial values.
-    4. If missing value → set null
+    4. Always extract best possible answer from available context. If multiple candidates exist, answer per candidate separately.
     5. ALWAYS preserve execution order logically:
        - fetch data first
        - email last if needed
@@ -1094,8 +996,12 @@ def planner_tool(user_input, available_agents):
        - You MUST use qa_agent
        - NEVER return empty steps
     9. For "user_input":
-        - MUST be the EXACT original user sentence
         - DO NOT modify or shorten it
+    10. If multiple candidates are mentioned:
+        - Split into MULTIPLE steps
+        - Each step must target ONE candidate only
+        - Rewrite the intent clearly per candidate
+    
 
     Each step must be INDEPENDENT.
 
@@ -1187,7 +1093,33 @@ def planner_tool(user_input, available_agents):
                 "agent": "resume_agent",
                 "params": {{
                     "user_input": "give me the phone number of mah qing tong from his resume",
-                    "top_k": 5
+                    "top_k": 5,
+                    "candidate_name": "Mah Qing Tong"
+                }}
+            }}
+        ]
+    }}
+
+    User:
+    give me the phone number of mah qing tong and Hoo Vi Ying
+
+    Output:
+    {{
+        "steps": [
+            {{
+                "agent": "resume_agent",
+                "params": {{
+                    "user_input": "give me the phone number of mah qing tong",
+                    "top_k": 5,
+                    "candidate_name": "Mah Qing Tong"
+                }}
+            }},
+            {{
+                "agent": "resume_agent",
+                "params": {{
+                    "user_input": "give me the phone number of Hoo Vi Ying",
+                    "top_k": 5,
+                    "candidate_name": "Hoo Vi Ying"
                 }}
             }}
         ]

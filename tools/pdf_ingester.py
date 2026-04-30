@@ -1,8 +1,9 @@
 import uuid
 import os
 from qdrant_client import QdrantClient, models
+import re
+from tools.data_loader import load_and_chunk_pdf, embed_texts, get_sparse_model
 
-from tools.data_loader import load_and_chunk_pdf, embed_texts, embed_sparse
 
 RESUME_COLLECTION_HYBRID = "pdf_chunks_hybrid"
 
@@ -12,6 +13,25 @@ RESUME_COLLECTION_HYBRID = "pdf_chunks_hybrid"
 # =========================================================
 _qdrant_client = None
 
+import os
+
+def extract_candidate_name(filename: str | None = None) -> str | None:
+    if not filename:
+        return None
+
+    name = os.path.splitext(filename)[0]  # remove .pdf
+
+    # remove resume noise
+    name = re.sub(r"(resume|cv|curriculum|vitae)", "", name, flags=re.I)
+
+    # replace underscores with spaces
+    name = name.replace("_", " ")
+
+    # clean extra spaces + symbols
+    name = re.sub(r"[^A-Za-z ]", "", name)
+    name = " ".join(name.split()).strip().lower()
+
+    return name if name else None
 
 def get_qdrant():
     global _qdrant_client
@@ -24,14 +44,13 @@ def get_qdrant():
     return _qdrant_client
 
 
-def ensure_resume_hybrid_collection() -> None:
+def ensure_resume_hybrid_collection():
     client = get_qdrant()
 
-    collections = client.get_collections().collections
-    names = {c.name for c in collections}
+    existing = {c.name for c in client.get_collections().collections}
 
-    if RESUME_COLLECTION_HYBRID in names:
-        return
+    if RESUME_COLLECTION_HYBRID in existing:
+        return  # ❌ DO NOT TOUCH EXISTING SCHEMA
 
     client.create_collection(
         collection_name=RESUME_COLLECTION_HYBRID,
@@ -47,38 +66,50 @@ def ensure_resume_hybrid_collection() -> None:
     )
 
 
+def normalize_resume_filename(filename: str) -> str:
+    return filename.strip().lower().replace(" ", "_")
+
+
 def ingest_pdf_hybrid(pdf_path: str, source_id: str | None = None) -> dict:
-
     client = get_qdrant()
-
-    source_id = source_id or pdf_path
-
     ensure_resume_hybrid_collection()
 
+    # Only normalize here (single source of truth)
+    source_id = normalize_resume_filename(source_id)
+
     chunks = load_and_chunk_pdf(pdf_path)
+    full_text = "\n".join(chunks)
+
+    candidate_name = extract_candidate_name(source_id)
+
+
     dense_vecs = embed_texts(chunks)
+    sparse_results = list(get_sparse_model().embed(chunks))
 
     points = []
 
     for i, chunk in enumerate(chunks):
-        point_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{source_id}:{i}"))
 
-        sparse_indices, sparse_values = embed_sparse(chunk)
+        if len(dense_vecs[i]) != 3072:
+            raise ValueError("Embedding size mismatch")
+
+        sparse = sparse_results[i]
 
         payload = {
-            "source": source_id,
+            "source_id": source_id,
+            "candidate_name": candidate_name,
             "chunk_index": i,
             "text": chunk,
         }
 
         points.append(
             models.PointStruct(
-                id=point_id,
+                id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"{source_id}:{i}")),
                 vector={
                     "dense": dense_vecs[i],
                     "sparse": models.SparseVector(
-                        indices=sparse_indices,
-                        values=sparse_values,
+                        indices=list(sparse.indices),
+                        values=list(sparse.values),
                     ),
                 },
                 payload=payload,
@@ -94,4 +125,5 @@ def ingest_pdf_hybrid(pdf_path: str, source_id: str | None = None) -> dict:
         "ingested": len(chunks),
         "collection": RESUME_COLLECTION_HYBRID,
         "source_id": source_id,
+        "candidate_name": candidate_name
     }

@@ -20,14 +20,14 @@ type Job = {
 type Message =
   | { role: "user"; type: "text"; content: string }
   | { role: "assistant"; type: "text"; content: string }
-  | { role: "assistant"; type: "jobs"; jobs: Job[] };
+  | { role: "assistant"; type: "jobs"; jobs: Job[] }
+  | { role: "assistant"; type: "list"; items: string[] };
 
 export default function RagLandingPage() {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // 🔥 Upload states
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
 
@@ -37,31 +37,9 @@ export default function RagLandingPage() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
-  // 🔥 Suggestions
-  const suggestionCards = [
-    {
-      title: "📄 Review my resume",
-      description: "Get feedback and improve your CV",
-      prompt: "Can you review my resume and suggest improvements?",
-    },
-    {
-      title: "🔍 Find matching jobs",
-      description: "Based on your skills and experience",
-      prompt: "Find jobs that match my resume",
-    },
-    {
-      title: "🧠 Missing skills",
-      description: "Identify skill gaps for your target role",
-      prompt: "What skills are missing in my CV?",
-    },
-    {
-      title: "📧 Send jobs to email",
-      description: "Receive job recommendations via email",
-      prompt: "Find jobs and send them to my email",
-    },
-  ];
-
-  // 🔥 HANDLE CHAT
+  // =========================
+  // SEND MESSAGE
+  // =========================
   async function handleSend(question: string) {
     if (!question.trim()) return;
 
@@ -76,45 +54,49 @@ export default function RagLandingPage() {
       const response = await askRagQuestion(question, 5);
 
       const jobs = response?.data?.jobs ?? [];
-      const answer = response?.data?.answer ?? "";
+      const rawAnswer = response?.data?.answer;
 
+      // =========================
+      // JOBS
+      // =========================
       if (jobs.length > 0) {
         setMessages((prev) => [
           ...prev,
           { role: "assistant", type: "jobs", jobs },
         ]);
         setLoading(false);
-      } else {
+        return;
+      }
+
+      // =========================
+      // LIST RESPONSE
+      // =========================
+      if (Array.isArray(rawAnswer)) {
         setMessages((prev) => [
           ...prev,
-          { role: "assistant", type: "text", content: "" },
+          {
+            role: "assistant",
+            type: "list",
+            items: rawAnswer,
+          },
         ]);
-
-        const words = answer.split(" ");
-        let i = 0;
-
-        const interval = setInterval(() => {
-          i++;
-
-          setMessages((prev) => {
-            const last = prev[prev.length - 1];
-            if (!last || last.type !== "text") return prev;
-
-            const updated = [...prev];
-            updated[updated.length - 1] = {
-              ...last,
-              content: words.slice(0, i).join(" "),
-            };
-
-            return updated;
-          });
-
-          if (i >= words.length) {
-            clearInterval(interval);
-            setLoading(false);
-          }
-        }, 40);
+        setLoading(false);
+        return;
       }
+
+      // =========================
+      // TEXT RESPONSE
+      // =========================
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          type: "text",
+          content: rawAnswer ?? "No response found.",
+        },
+      ]);
+
+      setLoading(false);
     } catch {
       setMessages((prev) => [
         ...prev,
@@ -128,21 +110,22 @@ export default function RagLandingPage() {
     }
   }
 
-  // 🔥 HANDLE PDF UPLOAD
-  async function handleFileUpload(selectedFile: File) {
+  // =========================
+  // UPLOAD PDF
+  // =========================
+  async function handleFileUpload(file: File) {
     try {
       setUploading(true);
-      setFile(selectedFile);
+      setFile(file);
 
-      await uploadPdf(selectedFile);
+      await uploadPdf(file);
 
       setMessages((prev) => [
         ...prev,
         {
           role: "assistant",
           type: "text",
-          content:
-            "✅ Resume uploaded successfully. You can now ask questions about it.",
+          content: "✅ Resume uploaded successfully.",
         },
       ]);
     } catch {
@@ -173,44 +156,14 @@ export default function RagLandingPage() {
         </motion.h1>
 
         <p className="mt-2 text-gray-500">
-          Ask anything about your resume or job search
+          Ask anything about your resume or jobs
         </p>
       </div>
 
-      {/* CHAT */}
-      <div className="flex-1 overflow-y-auto px-6 mt-6 pb-32">
+      {/* CHAT AREA */}
+      <div className="flex-1 overflow-y-auto px-6 mt-6 pb-28">
         <div className="max-w-5xl mx-auto space-y-6">
 
-          {/* EMPTY STATE */}
-          {messages.length === 0 && (
-            <div className="flex flex-col items-center justify-center mt-20 text-center">
-              <h2 className="text-2xl font-semibold text-gray-800">
-                What can I help you with?
-              </h2>
-
-              <p className="text-gray-500 mt-2 mb-6">
-                Try one of the suggestions below
-              </p>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full max-w-3xl">
-                {suggestionCards.map((card, i) => (
-                  <motion.div
-                    key={i}
-                    whileHover={{ scale: 1.03, y: -4 }}
-                    onClick={() => handleSend(card.prompt)}
-                    className="cursor-pointer rounded-xl border bg-white p-4 shadow-sm hover:shadow-md"
-                  >
-                    <p className="font-medium">{card.title}</p>
-                    <p className="text-sm text-gray-500 mt-1">
-                      {card.description}
-                    </p>
-                  </motion.div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* MESSAGES */}
           <AnimatePresence>
             {messages.map((msg, i) => (
               <motion.div
@@ -221,13 +174,15 @@ export default function RagLandingPage() {
                   msg.role === "user" ? "justify-end" : "justify-start"
                 }`}
               >
+
+                {/* TEXT */}
                 {msg.type === "text" && (
                   <div className="max-w-3xl">
                     <div
                       className={`px-4 py-2 rounded-2xl ${
                         msg.role === "user"
                           ? "bg-gray-900 text-white"
-                          : "text-gray-800"
+                          : "bg-white text-gray-800"
                       }`}
                     >
                       <ReactMarkdown>{msg.content}</ReactMarkdown>
@@ -235,84 +190,175 @@ export default function RagLandingPage() {
                   </div>
                 )}
 
+                {/* JOBS */}
                 {msg.type === "jobs" && (
                   <div className="space-y-4 w-full">
                     {msg.jobs.map((job, j) => (
-                      <div key={j} className="rounded-xl p-4 bg-white border">
-                        <p className="font-semibold">{job.title}</p>
-                        <p className="text-sm text-gray-500">
-                          {job.company} • {job.location}
-                        </p>
+                      <motion.div
+                        key={j}
+                        whileHover={{ scale: 1.02, y: -4 }}
+                        className="rounded-xl p-4 bg-white border border-gray-200 space-y-3"
+                      >
+                        {/* Title */}
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <p className="font-semibold">{job.title}</p>
+                            <p className="text-sm text-gray-500">
+                              {job.company} • {job.location}
+                            </p>
+                          </div>
+
+                          {job.link && (
+                            <a
+                              href={job.link}
+                              target="_blank"
+                              className="text-sm px-3 py-1 rounded-full bg-gray-700 text-white hover:bg-gray-800 transition"
+                            >
+                              Apply
+                            </a>
+                          )}
+                        </div>
+
+                        {/* Reason */}
+                        {job.reason && (
+                          <p className="text-sm text-gray-600">
+                            {job.reason}
+                          </p>
+                        )}
+
+                        {/* Matching Skills */}
+                        {job.matching_skills && job.matching_skills.length > 0 && (
+                          <div>
+                            <p className="text-xs text-gray-500 mb-1">Matching Skills</p>
+                            <div className="flex flex-wrap gap-2">
+                              {job.matching_skills.map((skill, i) => (
+                                <span
+                                  key={i}
+                                  className="text-xs px-2 py-1 rounded-full bg-green-100 text-green-700"
+                                >
+                                  {skill}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Missing Skills */}
+                        {job.missing_skills && job.missing_skills.length > 0 && (
+                          <div>
+                            <p className="text-xs text-gray-500 mb-1">Missing Skills</p>
+                            <div className="flex flex-wrap gap-2">
+                              {job.missing_skills.map((skill, i) => (
+                                <span
+                                  key={i}
+                                  className="text-xs px-2 py-1 rounded-full bg-gray-200 text-gray-600"
+                                >
+                                  {skill}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Match Score */}
+                        {job.fit_score !== undefined && (
+                          <div className="mt-2">
+                            <p className="text-xs text-gray-600 mb-1">
+                              Match: {Math.round(job.fit_score * 100)}%
+                            </p>
+
+                            <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+                              <motion.div
+                                initial={{ width: 0 }}
+                                animate={{
+                                  width: `${job.fit_score * 100}%`,
+                                }}
+                                className="h-full bg-gray-900"
+                              />
+                            </div>
+                          </div>
+                        )}
+                      </motion.div>
+                    ))}
+                  </div>
+                )}
+
+                {/* LIST */}
+                {msg.type === "list" && (
+                  <div className="space-y-2 max-w-3xl">
+                    {msg.items.map((item, idx) => (
+                      <div
+                        key={idx}
+                        className="px-4 py-2 bg-white border rounded-xl text-gray-800"
+                      >
+                        {item}
                       </div>
                     ))}
                   </div>
                 )}
+
               </motion.div>
             ))}
           </AnimatePresence>
 
-          {/* LOADING */}
-          {loading && <p className="text-sm text-gray-400">Thinking...</p>}
+          {loading && (
+            <p className="text-sm text-gray-400">Thinking...</p>
+          )}
 
           <div ref={bottomRef} />
         </div>
       </div>
 
-      {/* INPUT + UPLOAD */}
+      {/* INPUT */}
       <div className="fixed bottom-4 left-1/2 -translate-x-1/2 w-full max-w-2xl px-4">
-        <div className="flex flex-col gap-2 rounded-2xl border bg-white px-3 py-2 shadow-sm">
+        <div className="flex items-center gap-2 bg-white border rounded-full px-3 py-2">
 
-          {/* FILE PREVIEW */}
-          {file && (
-            <div className="flex justify-between bg-gray-100 px-3 py-1 rounded-lg text-sm">
-              <span>{file.name}</span>
-              <button onClick={() => setFile(null)} className="text-red-500">
-                remove
-              </button>
-            </div>
-          )}
-
-          <div className="flex items-center gap-2">
-
-            {/* UPLOAD */}
-            <label className="cursor-pointer p-2 hover:bg-gray-100 rounded-full">
-              <Paperclip size={16} />
-              <input
-                type="file"
-                accept=".pdf"
-                hidden
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) handleFileUpload(f);
-                }}
-              />
-            </label>
-
-            {/* INPUT */}
+          {/* UPLOAD */}
+          <label className="cursor-pointer p-2">
+            <Paperclip size={16} />
             <input
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              className="flex-1 outline-none text-sm"
-              placeholder="Ask about your resume..."
+              type="file"
+              hidden
+              accept=".pdf"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) handleFileUpload(f);
+              }}
             />
+          </label>
 
-            {/* SEND */}
-            <button
-              onClick={() => {
+          {/* INPUT */}
+          <input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            className="flex-1 outline-none text-sm"
+            placeholder="Ask anything..."
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
                 handleSend(input);
                 setInput("");
-              }}
-              disabled={uploading}
-              className="p-2 bg-gray-900 text-white rounded-full"
-            >
-              <ArrowRight size={16} />
-            </button>
-          </div>
+              }
+            }}
+          />
 
-          {uploading && (
-            <p className="text-xs text-gray-500">Uploading resume...</p>
-          )}
+          {/* SEND */}
+          <button
+            onClick={() => {
+              handleSend(input);
+              setInput("");
+            }}
+            className="p-2 bg-gray-900 text-white rounded-full"
+          >
+            <ArrowRight size={16} />
+          </button>
+
         </div>
+
+        {uploading && (
+          <p className="text-xs text-gray-500 mt-1">
+            Uploading resume...
+          </p>
+        )}
       </div>
     </main>
   );

@@ -135,6 +135,8 @@ class OrchestratorAgent:
                 user_input=question
             )
 
+            logger.info(plan)
+
             steps = plan.get("result", {}).get("steps", [])
 
             if not steps:
@@ -149,8 +151,10 @@ class OrchestratorAgent:
             # 2. MEMORY
             # ---------------------------------
             job_results = []
-            final_result = None
+            final_result = None # None
             final_mode = None
+
+            answer_list = []
 
             # ---------------------------------
             # 3. EXECUTE STEPS
@@ -198,16 +202,23 @@ class OrchestratorAgent:
 
                 final_mode = agent_name
                 final_result = result
-
+                
                 # capture jobs
                 if agent_name == "job_search_agent":
                     job_results = result.get("data", {}).get("jobs", [])
 
+                
             # ---------------------------------
             # 4. NORMALIZE RESPONSE
             # ---------------------------------
-            answer = self._extract_answer(final_result)
-            jobs = self._extract_jobs(final_result)
+                answer = self._extract_answer(final_result)
+                answer_list.append(answer)
+
+                jobs = self._extract_jobs(final_result)
+                
+
+
+            logger.info(answer_list)
 
             if not answer and jobs:
                 answer = f"Found {len(jobs)} relevant jobs"
@@ -222,7 +233,7 @@ class OrchestratorAgent:
                 status="success",
                 data={
                     "mode": final_mode,
-                    "answer": answer,
+                    "answer": answer_list,
                     "jobs": jobs
                 },
                 meta={

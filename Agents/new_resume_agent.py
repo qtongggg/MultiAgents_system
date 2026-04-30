@@ -17,7 +17,8 @@ class ResumeAgent(BaseAgent):
     async def run(
         self,
         user_input: str,
-        top_k: int = 5
+        top_k: int = 5,
+        candidate_name: str = None
     ):
         try:
             mcp_tools = await self.get_tools()
@@ -27,7 +28,7 @@ class ResumeAgent(BaseAgent):
             # -------------------------------
             # 0. Query Rewritting
             # -------------------------------
-            
+
             # -------------------------------
             # 1. SEARCH RESUME
             # -------------------------------
@@ -37,12 +38,14 @@ class ResumeAgent(BaseAgent):
                 search_resume_tool,
                 {
                     "question": user_input,
-                    "top_k": top_k
+                    "top_k": top_k,
+                    "candidate_name": candidate_name 
                 }
             )
             
 
-            retrieved_chunks = search_result.get("data", [])  # list[dict]
+            retrieved_data = search_result.get("data", {})
+            retrieved_chunks = retrieved_data.get("chunks", [])
 
             # -------------------------------
             # 2. SAFE VALIDATION
@@ -51,7 +54,7 @@ class ResumeAgent(BaseAgent):
 
             cleaned_chunks = [
                 ResumeResult.model_validate(item)
-                for item in retrieved_chunks.get("chunks")
+                for item in retrieved_chunks
                 if isinstance(item, dict)
             ]
             
@@ -93,7 +96,6 @@ class ResumeAgent(BaseAgent):
                 .get("answer", "")
             )
 
-            logger.info(f"resume final result: {final_answer}")
 
             # -------------------------------
             # 5. RETURN STANDARD FORMAT

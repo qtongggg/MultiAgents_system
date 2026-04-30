@@ -32,7 +32,7 @@ class PlannerAgent(BaseAgent):
             planner_tool,
             {
                 "user_input": user_input,
-                "available_agents": available_agents 
+                "available_agents": available_agents    
             }
 
         )
