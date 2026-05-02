@@ -28,7 +28,6 @@ export default function RagLandingPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
 
-  const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
 
   const bottomRef = useRef<HTMLDivElement | null>(null);
@@ -38,7 +37,25 @@ export default function RagLandingPage() {
   }, [messages, loading]);
 
   // =========================
-  // SEND MESSAGE
+  // 🔥 CLEAN LIST FUNCTION
+  // =========================
+  function cleanAnswers(list: string[]) {
+    if (!list || list.length === 0) return [];
+
+    // remove duplicates
+    const unique = Array.from(new Set(list));
+
+    // remove empty / useless answers
+    return unique.filter(
+      (item) =>
+        item &&
+        item.trim() !== "" &&
+        item !== "Not available in the provided resume context."
+    );
+  }
+
+  // =========================
+  // 🚀 SEND MESSAGE
   // =========================
   async function handleSend(question: string) {
     if (!question.trim()) return;
@@ -69,17 +86,32 @@ export default function RagLandingPage() {
       }
 
       // =========================
-      // LIST RESPONSE
+      // LIST RESPONSE (FIXED)
       // =========================
       if (Array.isArray(rawAnswer)) {
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: "assistant",
-            type: "list",
-            items: rawAnswer,
-          },
-        ]);
+        const cleaned = cleanAnswers(rawAnswer);
+
+        // 👉 If only ONE result → show as TEXT
+        if (cleaned.length === 1) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: "assistant",
+              type: "text",
+              content: cleaned[0],
+            },
+          ]);
+        } else {
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: "assistant",
+              type: "list",
+              items: cleaned,
+            },
+          ]);
+        }
+
         setLoading(false);
         return;
       }
@@ -111,12 +143,11 @@ export default function RagLandingPage() {
   }
 
   // =========================
-  // UPLOAD PDF
+  // 📄 UPLOAD PDF
   // =========================
   async function handleFileUpload(file: File) {
     try {
       setUploading(true);
-      setFile(file);
 
       await uploadPdf(file);
 
@@ -160,7 +191,7 @@ export default function RagLandingPage() {
         </p>
       </div>
 
-      {/* CHAT AREA */}
+      {/* CHAT */}
       <div className="flex-1 overflow-y-auto px-6 mt-6 pb-28">
         <div className="max-w-5xl mx-auto space-y-6">
 
@@ -190,109 +221,34 @@ export default function RagLandingPage() {
                   </div>
                 )}
 
-                {/* JOBS */}
+                {/* LIST (IMPROVED UI) */}
+                {msg.type === "list" && (
+                  <div className="space-y-2 max-w-3xl">
+                    {msg.items.map((item, idx) => (
+                      <div
+                        key={idx}
+                        className="px-4 py-2 bg-white border rounded-xl text-gray-800 shadow-sm"
+                      >
+                        {item}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* JOBS (unchanged) */}
                 {msg.type === "jobs" && (
                   <div className="space-y-4 w-full">
                     {msg.jobs.map((job, j) => (
                       <motion.div
                         key={j}
                         whileHover={{ scale: 1.02, y: -4 }}
-                        className="rounded-xl p-4 bg-white border border-gray-200 space-y-3"
+                        className="rounded-xl p-4 bg-white border space-y-3"
                       >
-                        {/* Title */}
-                        <div className="flex justify-between items-start">
-                          <div>
-                            <p className="font-semibold">{job.title}</p>
-                            <p className="text-sm text-gray-500">
-                              {job.company} • {job.location}
-                            </p>
-                          </div>
-
-                          {job.link && (
-                            <a
-                              href={job.link}
-                              target="_blank"
-                              className="text-sm px-3 py-1 rounded-full bg-gray-700 text-white hover:bg-gray-800 transition"
-                            >
-                              Apply
-                            </a>
-                          )}
-                        </div>
-
-                        {/* Reason */}
-                        {job.reason && (
-                          <p className="text-sm text-gray-600">
-                            {job.reason}
-                          </p>
-                        )}
-
-                        {/* Matching Skills */}
-                        {job.matching_skills && job.matching_skills.length > 0 && (
-                          <div>
-                            <p className="text-xs text-gray-500 mb-1">Matching Skills</p>
-                            <div className="flex flex-wrap gap-2">
-                              {job.matching_skills.map((skill, i) => (
-                                <span
-                                  key={i}
-                                  className="text-xs px-2 py-1 rounded-full bg-green-100 text-green-700"
-                                >
-                                  {skill}
-                                </span>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Missing Skills */}
-                        {job.missing_skills && job.missing_skills.length > 0 && (
-                          <div>
-                            <p className="text-xs text-gray-500 mb-1">Missing Skills</p>
-                            <div className="flex flex-wrap gap-2">
-                              {job.missing_skills.map((skill, i) => (
-                                <span
-                                  key={i}
-                                  className="text-xs px-2 py-1 rounded-full bg-gray-200 text-gray-600"
-                                >
-                                  {skill}
-                                </span>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Match Score */}
-                        {job.fit_score !== undefined && (
-                          <div className="mt-2">
-                            <p className="text-xs text-gray-600 mb-1">
-                              Match: {Math.round(job.fit_score * 100)}%
-                            </p>
-
-                            <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
-                              <motion.div
-                                initial={{ width: 0 }}
-                                animate={{
-                                  width: `${job.fit_score * 100}%`,
-                                }}
-                                className="h-full bg-gray-900"
-                              />
-                            </div>
-                          </div>
-                        )}
+                        <p className="font-semibold">{job.title}</p>
+                        <p className="text-sm text-gray-500">
+                          {job.company} • {job.location}
+                        </p>
                       </motion.div>
-                    ))}
-                  </div>
-                )}
-
-                {/* LIST */}
-                {msg.type === "list" && (
-                  <div className="space-y-2 max-w-3xl">
-                    {msg.items.map((item, idx) => (
-                      <div
-                        key={idx}
-                        className="px-4 py-2 bg-white border rounded-xl text-gray-800"
-                      >
-                        {item}
-                      </div>
                     ))}
                   </div>
                 )}
@@ -301,9 +257,7 @@ export default function RagLandingPage() {
             ))}
           </AnimatePresence>
 
-          {loading && (
-            <p className="text-sm text-gray-400">Thinking...</p>
-          )}
+          {loading && <p className="text-sm text-gray-400">Thinking...</p>}
 
           <div ref={bottomRef} />
         </div>

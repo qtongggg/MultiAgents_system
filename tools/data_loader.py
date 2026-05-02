@@ -164,14 +164,29 @@ def search_resume_function(
     candidate_name: str | None = None
 ) -> dict:
 
-    dense_query = embed_dense(question)
-    sparse_indices, sparse_values = embed_sparse(question)
-
-    query_filter = None
+    # -----------------------------
+    # 🔥 BUILD QUERY (FIXED)
+    # -----------------------------
+    query_text = question
 
     if candidate_name:
         normalized = candidate_name.strip().lower()
+        query_text = f"{question} for {normalized}"
+    else:
+        normalized = None
 
+    # -----------------------------
+    # 🔥 EMBEDDING (FIXED)
+    # -----------------------------
+    dense_query = embed_dense(query_text)
+    sparse_indices, sparse_values = embed_sparse(query_text)
+
+    # -----------------------------
+    # 🔥 FILTER (UNCHANGED BUT SAFER)
+    # -----------------------------
+    query_filter = None
+
+    if normalized:
         query_filter = models.Filter(
             must=[
                 models.FieldCondition(
@@ -182,7 +197,7 @@ def search_resume_function(
         )
 
     # -----------------------------
-    # RETRIEVAL
+    # 🔍 RETRIEVAL (UNCHANGED)
     # -----------------------------
     response = qdrant_client.query_points(
         collection_name=RESUME_COLLECTION_HYBRID,
@@ -217,7 +232,7 @@ def search_resume_function(
         scores.append(float(point.score or 0.0))
 
     # -----------------------------
-    # EMPTY CHECK
+    # ⚠️ EMPTY CHECK
     # -----------------------------
     if not payloads:
         return {
@@ -231,11 +246,9 @@ def search_resume_function(
     }
 
     # -----------------------------
-    # RERANK QUERY (FIXED)
+    # 🔥 RERANK (FIXED)
     # -----------------------------
-    rerank_query = question
-    if candidate_name:
-        rerank_query = f"{question} (Candidate: {candidate_name})"
+    rerank_query = query_text  # ✅ USE FIXED QUERY
 
     reranked = rerank_results(rerank_query, search_results, top_k)
 

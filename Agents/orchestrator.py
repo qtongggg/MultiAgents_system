@@ -14,13 +14,14 @@ logger = logging.getLogger(__name__)
 # ORCHESTRATOR AGENT
 # =========================================================
 
+# =========================================================
+# ORCHESTRATOR AGENT (FIXED)
+# =========================================================
+
 class OrchestratorAgent:
     def __init__(self, registry: AgentRegistry):
         self.registry = registry
 
-    # -----------------------------------------------------
-    # SAFE AGENT EXECUTION
-    # -----------------------------------------------------
     async def run(self, name: str, **kwargs):
         try:
             agent = self.registry.get_agent(name)
@@ -42,51 +43,20 @@ class OrchestratorAgent:
             ).model_dump()
 
     # -----------------------------------------------------
-    # INTENT → AGENT MAPPING
-    # -----------------------------------------------------
-    def get_agent_by_intent(self, intent: str) -> str:
-        mapping = {
-            "job_search": "job_search_agent",
-            "resume": "resume_agent",
-            "qa": "qa_agent",
-            "email": "email_agent",
-        }
-
-        return mapping.get(intent, "qa_agent")
-
-    # -----------------------------------------------------
-    # POST ACTIONS (EMAIL AFTER JOB SEARCH)
-    # -----------------------------------------------------
-    async def handle_post_actions(self, intent: str, jobs: list):
-        if intent == "job_search" and jobs:
-            logger.info("📧 Triggering EmailAgent in background...")
-
-            asyncio.create_task(
-                self.run(
-                    name="email_agent",
-                    context=jobs,
-                    user_email="smartqingtong@gmail.com"
-                )
-            )
-
-    # -----------------------------------------------------
-    # SAFE EXTRACT ANSWER
+    # EXTRACT ANSWER
     # -----------------------------------------------------
     def _extract_answer(self, result: dict) -> str:
         if not isinstance(result, dict):
             return ""
 
-        # Case 1: direct answer
         if isinstance(result.get("answer"), str):
             return result["answer"]
 
-        # Case 2: AgentResult style -> data.answer
         data = result.get("data")
         if isinstance(data, dict):
             if isinstance(data.get("answer"), str):
                 return data["answer"]
 
-        # Case 3: legacy result.answer
         nested = result.get("result")
         if isinstance(nested, dict):
             if isinstance(nested.get("answer"), str):
@@ -95,23 +65,20 @@ class OrchestratorAgent:
         return ""
 
     # -----------------------------------------------------
-    # SAFE EXTRACT JOBS
+    # EXTRACT JOBS
     # -----------------------------------------------------
     def _extract_jobs(self, result: dict) -> list:
         if not isinstance(result, dict):
             return []
 
-        # Case 1: direct jobs
         if isinstance(result.get("jobs"), list):
             return result["jobs"]
 
-        # Case 2: AgentResult style -> data.jobs
         data = result.get("data")
         if isinstance(data, dict):
             if isinstance(data.get("jobs"), list):
                 return data["jobs"]
 
-        # Case 3: legacy result.jobs
         nested = result.get("result")
         if isinstance(nested, dict):
             if isinstance(nested.get("jobs"), list):
@@ -119,14 +86,32 @@ class OrchestratorAgent:
 
         return []
 
-        
+    # -----------------------------------------------------
+    # MERGE ANSWERS (FIXED)
+    # -----------------------------------------------------
+    def _merge_answers(self, answers: List[str]) -> str:
+        clean = [
+            a.strip()
+            for a in answers
+            if a and a.strip() and a != "Not available in the provided resume context."
+        ]
+
+        if not clean:
+            return "No relevant information found."
+
+        # remove duplicates
+        unique = list(dict.fromkeys(clean))
+
+        return "\n".join(f"- {a}" for a in unique)
+
+    # -----------------------------------------------------
+    # PIPELINE
+    # -----------------------------------------------------
     async def run_pipeline(self, question: str):
 
         logger.info("🔥 START PLANNER PIPELINE")
 
         try:
-            
-
             # ---------------------------------
             # 1. PLAN
             # ---------------------------------
@@ -151,10 +136,8 @@ class OrchestratorAgent:
             # 2. MEMORY
             # ---------------------------------
             job_results = []
-            final_result = None # None
             final_mode = None
-
-            answer_list = []
+            answer_list: List[str] = []
 
             # ---------------------------------
             # 3. EXECUTE STEPS
@@ -167,29 +150,15 @@ class OrchestratorAgent:
                 if not agent_name:
                     continue
 
-                # ---------------------------------
-                # EMAIL AGENT → BACKGROUND ONLY
-                # ---------------------------------
+                # EMAIL → background
                 if agent_name == "email_agent":
-
                     params["context"] = job_results
 
-                    logger.info(f"📧 Running EmailAgent in background: {params}")
-
                     asyncio.create_task(
-                        self.run(
-                            name="email_agent",
-                            **params
-                        )
+                        self.run(name="email_agent", **params)
                     )
-
-                    # IMPORTANT:
-                    # skip overwrite final_result
                     continue
 
-                # ---------------------------------
-                # NORMAL AGENT EXECUTION
-                # ---------------------------------
                 logger.info(f"Running agent: {agent_name}")
                 logger.info(f"Params: {params}")
 
@@ -201,40 +170,39 @@ class OrchestratorAgent:
                 logger.info(f"Result from {agent_name}: {result}")
 
                 final_mode = agent_name
-                final_result = result
-                
-                # capture jobs
+
+                # -------------------------
+                # COLLECT ANSWERS
+                # -------------------------
+                answer = self._extract_answer(result)
+                if answer:
+                    answer_list.append(answer)
+
+                # -------------------------
+                # COLLECT JOBS
+                # -------------------------
                 if agent_name == "job_search_agent":
-                    job_results = result.get("data", {}).get("jobs", [])
-
-                
-            # ---------------------------------
-            # 4. NORMALIZE RESPONSE
-            # ---------------------------------
-                answer = self._extract_answer(final_result)
-                answer_list.append(answer)
-
-                jobs = self._extract_jobs(final_result)
-                
-
-
-            logger.info(answer_list)
-
-            if not answer and jobs:
-                answer = f"Found {len(jobs)} relevant jobs"
-
-            if not answer and final_result:
-                answer = str(final_result.get("data", {}))
+                    jobs = self._extract_jobs(result)
+                    if jobs:
+                        job_results.extend(jobs)
 
             # ---------------------------------
-            # 5. FINAL RESPONSE
+            # 4. FINAL MERGE
+            # ---------------------------------
+            final_answer = self._merge_answers(answer_list)
+
+            if not final_answer and job_results:
+                final_answer = f"Found {len(job_results)} relevant jobs."
+
+            # ---------------------------------
+            # 5. RESPONSE
             # ---------------------------------
             return AgentResult(
                 status="success",
                 data={
                     "mode": final_mode,
-                    "answer": answer_list,
-                    "jobs": jobs
+                    "answer": final_answer,   # ✅ STRING now
+                    "jobs": job_results       # ✅ merged jobs
                 },
                 meta={
                     "total_steps": len(steps),

@@ -987,7 +987,7 @@ def planner_tool(user_input, available_agents):
     5. ALWAYS preserve execution order logically:
        - fetch data first
        - email last if needed
-    6. top_k always 5
+    6. top_k always 20
     7. DO NOT use:
        - use_previous_output
        - context chaining
@@ -1001,6 +1001,59 @@ def planner_tool(user_input, available_agents):
         - Split into MULTIPLE steps
         - Each step must target ONE candidate only
         - Rewrite the intent clearly per candidate
+    11. INTENT NORMALIZATION (CRITICAL):
+        - The meaning of the request matters MORE than the exact wording
+        - Treat the following words as SAME intent:
+        - "give", "provide", "show", "list", "tell me", "display"
+        - These ALL mean: "retrieve and return information"
+
+    12. MULTI-CANDIDATE HANDLING (STRICT):
+        - If multiple candidate names are detected:
+        - You MUST split into multiple steps
+        - EVEN IF the sentence is not explicitly separated
+        - EVEN IF the wording is complex or combined
+
+    13. QUERY REWRITING PER STEP:
+        - For each candidate:
+        - Rewrite the query to be SINGLE-CANDIDATE focused
+        - Remove other candidate names from that step
+        - Keep intent SAME
+
+    Example transformation:
+
+        User:
+        "provide me the phone number of mah qing tong and hoo vi ying"
+
+        Step 1:
+        "user_input": "provide me the phone number of mah qing tong"
+
+        Step 2:
+        "user_input": "provide me the phone number of hoo vi ying"
+    
+    14. DUPLICATE CANDIDATE HANDLING (CRITICAL):
+        - If the same candidate appears multiple times:
+        - You MUST deduplicate
+        - ONLY create ONE step for that candidate
+        - NEVER create duplicate steps for the same person
+
+        Example:
+
+        User:
+        "provide me the phone number of mah qing tong and mah qing tong"
+
+        Output:
+        {{
+        "steps": [
+            {{
+            "agent": "resume_agent",
+            "params": {{
+                "user_input": "provide me the phone number of mah qing tong",
+                "top_k": 5,
+                "candidate_name": "Mah Qing Tong"
+            }}
+            }}
+        ]
+        }}
     
 
     Each step must be INDEPENDENT.
