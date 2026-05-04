@@ -147,7 +147,7 @@ def ingest_pdf_hybrid(pdf_path: str, source_id: str | None = None) -> dict:
     ensure_collection(client)
 
     source_id = normalize_resume_filename(source_id or os.path.basename(pdf_path))
-    candidate_name = extract_candidate_name(source_id)
+    candidate_name = extract_candidate_name(source_id) or ""
 
     chunks = load_and_chunk_pdf(pdf_path)
 
@@ -200,12 +200,12 @@ def ingest_pdf_hybrid(pdf_path: str, source_id: str | None = None) -> dict:
     }
 
 
-# =========================
-# RUN TEST
-# =========================
-if __name__ == "__main__":
-    path = r"C:\Users\User\OneDrive\Documents\Wish you have a nice job\MAH QING TONG Resume.pdf"
+# # =========================
+# # RUN TEST
+# # =========================
+# if __name__ == "__main__":
+#     path = r"C:\Users\User\OneDrive\Documents\Wish you have a nice job\MAH QING TONG Resume.pdf"
 
-    result = ingest_pdf_hybrid(path)
+#     result = ingest_pdf_hybrid(path)
 
-    print(result)
+#     print(result)

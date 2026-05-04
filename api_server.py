@@ -15,7 +15,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from MCP_agent.agent_setup import startup_mcp, shutdown_mcp
 from Agents.Base_agent import AgentInfo
 from custom.custom_types import JobSearchRequest, AgentResult
-from tools.pdf_ingester import ingest_pdf_hybrid
+from tools.pdf_ingester_v2 import ingest_pdf_hybrid
 
 from Agents.orchestrator import OrchestratorAgent
 

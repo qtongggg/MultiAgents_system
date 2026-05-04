@@ -31,7 +31,6 @@ qdrant_client = QdrantClient(url="http://localhost:6333")
 # -------------------------------------------------------------------
 # Config
 # -------------------------------------------------------------------
-EMBED_MODEL = "text-embedding-3-large"
 EMBED_DIM = 3072
 
 DEFAULT_TOKENIZER_MODEL = "sentence-transformers/all-MiniLM-L6-v2"

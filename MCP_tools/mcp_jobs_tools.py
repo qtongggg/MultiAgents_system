@@ -8,7 +8,7 @@ import os
 
 from qdrant_client import QdrantClient, models
 from typing import Any
-from tools.data_loader import search_resume_function
+from tools.data_loader_v2 import search_resume_function
 from tools.job_searcher import search_jobs, clean_job_results
 from tools.job_cleanning_chunk import ingest_jobs_to_qdrant, make_cache_key, make_job_id
 from qdrant_client import QdrantClient
@@ -782,7 +782,7 @@ def search_resume(
 
     state = make_agent_state()
 
-    candidate_name = candidate_name.lower()
+    candidate_name = (candidate_name or "").strip().lower()
 
     state.update({
         "tool": "search_resume",
@@ -809,7 +809,7 @@ def search_resume(
             "meta": {
                 "tool": "search_resume",
                 "message": result.get("message"),
-                "filtered": candidate_name is not None
+                "filtered": bool(candidate_name)
             }
         }
 
@@ -987,7 +987,7 @@ def planner_tool(user_input, available_agents):
     5. ALWAYS preserve execution order logically:
        - fetch data first
        - email last if needed
-    6. top_k always 20
+    6. top_k always 5
     7. DO NOT use:
        - use_previous_output
        - context chaining
@@ -1054,6 +1054,16 @@ def planner_tool(user_input, available_agents):
             }}
         ]
         }}
+    15. CANDIDATE NAME VALIDATION (CRITICAL):
+        - candidate_name MUST be a real extracted entity from resume database
+        - If candidate name is:
+        - "this candidate"
+        - "the candidate"
+        - "unknown"
+        - "him/her"
+        - empty or vague
+        → SET candidate_name = null
+        → OR route to qa_agent
     
 
     Each step must be INDEPENDENT.
